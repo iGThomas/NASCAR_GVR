@@ -5,8 +5,6 @@ game. You get the real arcade front end (attract screen → driver, transmission
 race → back to the menus) in one folder of your choice. Xbox and PlayStation controllers work.
 Your PC stays a normal PC: no shell replacement, no autostart, no reboot.
 
-You need your own copy of the game disc. No game content is included here.
-
 ## Quick install
 
 **You need:**
