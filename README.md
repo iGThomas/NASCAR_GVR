@@ -133,5 +133,4 @@ workload): run `build.cmd` in each `src\` folder. To make a release download, ru
 ## Disclaimer
 
 This is an unofficial fan project for preserving arcade hardware software. NASCAR Team Racing is
-the property of its respective owners. You need your own original disc; no game content is
-distributed here.
+the property of its respective owners.
