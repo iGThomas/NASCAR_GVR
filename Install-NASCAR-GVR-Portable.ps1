@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-05-nascar-portable-4"   # every hand-applied fix is now an install stage; -DiscPath
+$Version = "2026-10-05-nascar-portable-4.1" # 4.1: runs after the NFSU installer in the same window
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -64,10 +64,13 @@ trap { try { Log ("FATAL: " + $_.Exception.Message) } catch {}; Write-Host "FAIL
 
 # GDI font registration. AddFontResource makes a newly copied font usable without a
 # reboot; the WM_FONTCHANGE broadcast tells running programs to re-read the font table.
+# both GVR installers define this type; a second run in the same PowerShell window must reuse it
+if (-not ("GvrFontApi" -as [type])) {
 Add-Type -Name GvrFontApi -Namespace "" -MemberDefinition @'
 [DllImport("gdi32.dll", CharSet=CharSet.Auto)] public static extern int AddFontResource(string lpszFilename);
 [DllImport("user32.dll", CharSet=CharSet.Auto)] public static extern int SendMessageTimeout(IntPtr hWnd,int Msg,IntPtr wParam,IntPtr lParam,int flags,int timeout,out IntPtr result);
-'@ -ErrorAction SilentlyContinue
+'@
+}
 
 function Log($m) {
     $s = "[{0}] {1}" -f (Get-Date -Format "HH:mm:ss"), $m
