@@ -914,6 +914,12 @@ Install-OemRev
 Install-Launcher $InstallRoot $Game $Shell
 Verify-Deployment $InstallRoot $Game $Shell $Plus $Db
 
+# the unpacked disc (~800 MB) is only needed during the install
+if (!$DryRun -and $ExtractRoot -like (Join-Path $env:TEMP "*") -and (Test-Path $ExtractRoot)) {
+    Remove-Item -LiteralPath $ExtractRoot -Recurse -Force -ErrorAction SilentlyContinue
+    Log "removed the temporary disc extraction ($ExtractRoot)"
+}
+
 Log "============================================================"
 Log "DONE - installed to $InstallRoot"
 Log "  play   : $InstallRoot\NascarLaunch.exe  (or the desktop / Start-menu shortcut)"

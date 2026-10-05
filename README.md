@@ -17,7 +17,8 @@ You need your own copy of the game disc. No game content is included here.
 
 **Steps:**
 
-1. Download this repository (green **Code** button → **Download ZIP**) and unzip it.
+1. Download the latest **`NASCAR-GVR-<version>.zip`** from the
+   [Releases](../../releases/latest) page and unzip it.
 2. Insert or mount the game disc.
 3. Open **PowerShell as Administrator** in the unzipped folder and run:
 
@@ -122,7 +123,9 @@ The install log is in `%TEMP%\NASCAR_GVR_Install\install.log`. If the race will 
 - `GvrDongleEmu` — a software dongle back end (research; not installed).
 
 The prebuilt binaries are included. To rebuild them you need Visual Studio (C++ desktop
-workload): run `build.cmd` in each `src\` folder. `Tools\Make-BytePatches.py` regenerates
+workload): run `build.cmd` in each `src\` folder. To make a release download, run
+`Tools\Make-Release.ps1 -Version <x.y>`: it packs only what the installer needs into
+`dist\NASCAR-GVR-<x.y>.zip`, which is then uploaded to a GitHub Release. `Tools\Make-BytePatches.py` regenerates
 `Patches\nascar-bytepatches.txt` from an original and a patched install.
 
 ## Disclaimer

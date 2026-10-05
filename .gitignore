@@ -9,3 +9,6 @@
 __pycache__/
 *.pyc
 .vs/
+
+# release zips built by Tools\Make-Release.ps1 (uploaded to GitHub Releases, not committed)
+dist/
