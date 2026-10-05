@@ -11,8 +11,10 @@ You need your own copy of the game disc. No game content is included here.
 
 **You need:**
 - Windows 10 or 11, 64-bit (tested on Windows 11)
-- the NASCAR Team Racing GlobalVR **game disc** (the one with `data1.cab` on it), as a disc,
-  a mounted ISO or a copied folder
+- the NASCAR Team Racing GlobalVR **v1.1 game disc** (part number **050-0136-01**, the one with
+  `data1.cab` on it), as a disc, a mounted ISO or a copied folder. **Only v1.1 is compatible.**
+  The fixes are made for the v1.1 files; other versions, such as the v1.5 disc, install but do
+  not run (for example "entry point ... CardSwipeStop ... not found").
 - about 1 GB of free space
 
 **Steps:**

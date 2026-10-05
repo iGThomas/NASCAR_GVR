@@ -114,6 +114,12 @@ Other documents in this folder:
 
 ## Still open
 
+- **Only the v1.1 game disc (050-0136-01) is supported.** A user with the **v1.5** disc got
+  "entry point `?CardSwipeStop@GvrSmartDevice@@QAEHXZ` not found" in `NASCARPlugin.dll`. That
+  function exists nowhere on the v1.1 disc, so v1.5 is a different build of the menu binaries,
+  and our byte patches do not match it (the installer logs "is not the expected OEM file - left
+  unpatched"). Supporting v1.5 would need that disc, to build a matching patch set.
+
 - Some operator screens that a home install does not need still call cabinet-only functions
   (golf leftovers, smart-card purchase screens, the motion test). (§12.1)
 - The "Game Crashed" message after an aborted race is the shell's wording for any unfinished
