@@ -12,7 +12,9 @@ You need your own copy of the game disc. No game content is included here.
 **You need:**
 - Windows 10 or 11, 64-bit (tested on Windows 11)
 - the NASCAR Team Racing GlobalVR **v1.1 game disc** (part number **050-0136-01**, the one with
-  `data1.cab` on it), as a disc, a mounted ISO or a copied folder. **Only v1.1 is compatible.**
+  `data1.cab` on it), as a disc, a mounted ISO or a copied folder. The ISO is on the Internet
+  Archive: [archive.org/details/isocd-Nascar_1.1_Game_050-0136-01.iso](https://archive.org/details/isocd-Nascar_1.1_Game_050-0136-01.iso).
+  **Only v1.1 is compatible.**
   The fixes are made for the v1.1 files; other versions, such as the v1.5 disc, install but do
   not run (for example "entry point ... CardSwipeStop ... not found").
 - about 1 GB of free space
@@ -21,7 +23,7 @@ You need your own copy of the game disc. No game content is included here.
 
 1. Download the latest **`NASCAR-GVR-<version>.zip`** from the
    [Releases](../../releases/latest) page and unzip it.
-2. Insert or mount the game disc.
+2. Insert the game disc, or mount the ISO (right-click it → **Mount**).
 3. Open **PowerShell as Administrator** in the unzipped folder and run:
 
    ```powershell
