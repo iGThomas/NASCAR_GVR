@@ -1,0 +1,13 @@
+# Windows project: keep Windows line endings for scripts on every checkout (incl. ZIP downloads)
+* text=auto
+*.cmd text eol=crlf
+*.bat text eol=crlf
+*.ps1 text eol=crlf
+*.ini text eol=crlf
+*.rc  text eol=crlf
+
+# binaries
+*.dll binary
+*.exe binary
+*.db  binary
+*.ico binary

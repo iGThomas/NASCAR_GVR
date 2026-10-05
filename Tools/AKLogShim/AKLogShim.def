@@ -1,0 +1,4 @@
+LIBRARY AKLogShim
+EXPORTS
+    DllGetClassObject PRIVATE
+    DllCanUnloadNow PRIVATE

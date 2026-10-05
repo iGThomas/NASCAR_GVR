@@ -1,0 +1,11 @@
+# build intermediates (the finished DLL/EXE in each build\ folder are kept)
+*.obj
+*.exp
+*.lib
+*.res
+*.pdb
+*.ilk
+*.log
+__pycache__/
+*.pyc
+.vs/

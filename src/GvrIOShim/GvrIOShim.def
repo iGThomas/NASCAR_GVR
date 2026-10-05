@@ -1,0 +1,19 @@
+; Generated from the OEM GvrIO.dll export table.
+; Every export is a FORWARDER to GvrIO_oem.dll: the loader resolves it
+; straight through, so the OEM code runs unmodified. The only thing this
+; shim adds is the heartbeat watchdog in DllMain.
+LIBRARY GvrIO
+EXPORTS
+    ??0GvrIOLogger@GvrIO@Zeus@Gvr@@QAE@XZ = GvrIO_oem.??0GvrIOLogger@GvrIO@Zeus@Gvr@@QAE@XZ
+    ??0cGvrIO@GvrIO@Zeus@Gvr@@QAE@XZ = GvrIO_oem.??0cGvrIO@GvrIO@Zeus@Gvr@@QAE@XZ
+    ??1GvrIOLogger@GvrIO@Zeus@Gvr@@QAE@XZ = GvrIO_oem.??1GvrIOLogger@GvrIO@Zeus@Gvr@@QAE@XZ
+    ; ??1cGvrIO@... is overridden in GvrIOShim.cpp, not forwarded.
+    ??4GvrIOLogger@GvrIO@Zeus@Gvr@@QAEAAV0123@ABV0123@@Z = GvrIO_oem.??4GvrIOLogger@GvrIO@Zeus@Gvr@@QAEAAV0123@ABV0123@@Z
+    ??4cGvrIO@GvrIO@Zeus@Gvr@@QAEAAV0123@ABV0123@@Z = GvrIO_oem.??4cGvrIO@GvrIO@Zeus@Gvr@@QAEAAV0123@ABV0123@@Z
+    ; ?GvrIOMessageSend@... is overridden in GvrIOShim.cpp (IO-board version fallback), not forwarded.
+    ; ?Initialize@... is NOT listed here - it is exported from the C++
+    ; class declaration in GvrIOShim.cpp, because a .def would truncate
+    ; the mangled name at its first '@'.
+    ?LogErrorPrintf@GvrIOLogger@GvrIO@Zeus@Gvr@@QAAXPADZZ = GvrIO_oem.?LogErrorPrintf@GvrIOLogger@GvrIO@Zeus@Gvr@@QAAXPADZZ
+    ?LogPrintf@GvrIOLogger@GvrIO@Zeus@Gvr@@QAAXPADZZ = GvrIO_oem.?LogPrintf@GvrIOLogger@GvrIO@Zeus@Gvr@@QAAXPADZZ
+    ?MessageRegisterCallback@cGvrIO@GvrIO@Zeus@Gvr@@QAE_NW4GVR_DEVICE_TYPES@234@P6APAXPAUsMessage@234@@Z@Z = GvrIO_oem.?MessageRegisterCallback@cGvrIO@GvrIO@Zeus@Gvr@@QAE_NW4GVR_DEVICE_TYPES@234@P6APAXPAUsMessage@234@@Z@Z

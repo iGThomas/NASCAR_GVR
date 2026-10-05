@@ -1,0 +1,7 @@
+; Undecorated names, matching the shipped GVRSCR28.dll / GVRSDEmulator.dll.
+; GVRStorageDevice.dll resolves these with GetProcAddress by exact string, so
+; the names must not be decorated.
+LIBRARY GVRSCR28
+EXPORTS
+    CreateGVRStorageDeviceImp
+    ReleaseGVRStorageDeviceImp
