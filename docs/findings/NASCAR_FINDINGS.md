@@ -956,6 +956,12 @@ test, in the VirtualStore copy. After one good pass the shell maintains them its
   `rundll32 nvcpl.dll,dtcfg setmode 1 <w> <h> 32 60` (frame 1 also runs `setmode 1 800 600`).
   Modern NVIDIA drivers reject `dtcfg` (result 8, desktop unchanged on an RTX 3060 laptop); old
   ones would obey. Case 11 also writes `FullScreenWidth/Height` (1360×768 here).
+  **Fixed 2026-10-05 (installer 4.2, release 1.0.2):** a user's PC with no 32-bit `nvcpl.dll`
+  showed Windows' "RunDLL: There was a problem starting nvcpl.dll" box on every start (the dev
+  PC has one, so it never appeared there). Both `Gvr.Launch("rundll32 nvcpl.dll,…")` statements
+  in `Shell.am` `Behavior95` (record `0x28867`, script lines 36 and 308) are now `;`, via
+  `Tools\Edit-AmScript.py` with the compressed size kept; the patch table carries it.
+  `Tools\Test-BytePatches.py` checks that the table reproduces a working install exactly.
 * Case 4 launches **`Shell\GammaSet.exe -gammasetting 3 -digitalvibrance 15`**; a 32-bit
   `NvCpl.dll` existed on the dev host, so it can really act. **Fix:** rename to
   `GammaSet.exe.arcade-disabled`, as NFSU's `Disable-GammaSet` does.

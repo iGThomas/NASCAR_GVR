@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-05-nascar-portable-4.1" # 4.1: runs after the NFSU installer in the same window
+$Version = "2026-10-05-nascar-portable-4.2" # 4.2: no rundll32 nvcpl.dll calls (RunDLL error box)
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -442,6 +442,8 @@ function Install-Sqlite($game, $shell, $plus, $dbPath) {
 #                                       the CD drive, no receive timeout (s.11.5)
 #   PlugIns\HerculesPlugIn.dll        - no wait for the cabinet monitor processes
 #   Shell.am                          - 15 s IO-board wait at startup -> 0.5 s
+#                                       and no "rundll32 nvcpl.dll,dtcfg setmode" calls (a RunDLL
+#                                       error box on PCs without a 32-bit NVIDIA nvcpl.dll)
 #   NASCAR_Selection/Attract.am, the operator-menu scenes
 #                                     - cabinet C:\NASCAR texture/audio paths made relative and
 #                                       the SendPacket calls to the missing link board removed
@@ -474,6 +476,12 @@ function Apply-BytePatches($root) {
             if (!(Matches $data $p[0] (HexBytes $p[2]))) { $isNew = $false }
         }
         if ($isNew) { $already++; continue }
+        if (!$isOem -and (Test-Path -LiteralPath "$path.oem")) {
+            # an older release's patch: start again from the OEM copy kept beside it
+            $orig = [IO.File]::ReadAllBytes("$path.oem"); $origOk = $true
+            foreach ($p in $files[$rel]) { if (!(Matches $orig $p[0] (HexBytes $p[1]))) { $origOk = $false } }
+            if ($origOk) { $data = $orig; $isOem = $true; Log "  $rel : updating an older patch from $rel.oem" }
+        }
         if (!$isOem) { Warn "  $rel is not the expected OEM file - left unpatched"; continue }
         if ($DryRun) { Log "  would patch $rel ($($files[$rel].Count) change(s))"; continue }
         $bak = "$path.oem"

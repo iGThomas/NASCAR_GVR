@@ -88,6 +88,9 @@ Other documents in this folder:
   Time"). It is patched so it only reads the time zone. (§11.5)
 - **It treats drive `D:` as the CD drive**, so any PC with a `D:` drive got "There is a CD in the
   drive". Patched. (§11.5)
+- **It runs the old NVIDIA control panel (`rundll32 nvcpl.dll`)** to switch the screen mode the
+  cabinet way. On most PCs that file does not exist and Windows shows a "RunDLL: There was a
+  problem starting nvcpl.dll" box. Both calls are removed from the startup script. (§11.5)
 - **It runs the NVIDIA gamma tool (`GammaSet.exe`)** on every start, which pops up an error or
   changes your screen colours. Disabled. (§11.5)
 - **The menus hide the taskbar and force "always on top".** The launcher puts the taskbar back
