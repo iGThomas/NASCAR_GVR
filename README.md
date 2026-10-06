@@ -20,23 +20,18 @@ Your PC stays a normal PC: no shell replacement, no autostart, no reboot.
 **Steps:**
 
 1. Download the latest **`NASCAR-GVR-<version>.zip`** from the
-   [Releases](../../releases/latest) page and unzip it.
-2. Insert the game disc, or mount the ISO (right-click it → **Mount**).
-3. Open **PowerShell as Administrator** in the unzipped folder and run:
-
-   ```powershell
-   Set-ExecutionPolicy -Scope Process Bypass
-   .\Install-NASCAR-GVR-Portable.ps1
-   ```
-
-4. Answer the two questions: the install folder (for example `D:\Games\NASCAR`) and the disc
-   drive (for example `E:\`). The installer unpacks the disc, applies every fix and installs
-   .NET 1.1 if it is missing. It takes a few minutes.
+   [Releases](../../releases/latest) page and unzip it (right-click → **Extract All**).
+2. Mount the game ISO (right-click it → **Mount**) or insert the disc.
+3. Double-click **`Install.bat`** in the unzipped folder and click **Yes** when Windows asks
+   for administrator rights. (If Windows asks "Do you want to run this file?", click **Run**.)
+4. Pick where to install (for example `C:\Games` — a `NASCAR_GVR` folder is created inside it).
+   The installer finds the mounted disc by itself, applies every fix and installs .NET 1.1 if
+   it is missing. It takes a few minutes and tells you when it is done.
 5. Start **NASCAR Team Racing** from the desktop shortcut.
 
-To pick your screen size up front, add it to the command, for example
-`.\Install-NASCAR-GVR-Portable.ps1 -Width 1920 -Height 1080`. You can change it later in
-`nascar_settings.ini` in the install folder.
+Screen size, fullscreen and the controller map are in `nascar_settings.ini` in the install
+folder. Advanced: the installer still takes command-line options, e.g.
+`Install.bat -Width 1920 -Height 1080` from an Administrator window.
 
 ### Controls
 
@@ -75,6 +70,7 @@ In the install folder. The main ones:
 | `-Fullscreen` | exclusive fullscreen instead of a window |
 | `-Dxvk` | use DXVK (Direct3D 9 on Vulkan) if the race misbehaves on your GPU |
 | `-NoShortcut` | no desktop / Start-menu shortcut |
+| `-NoGui` | typed questions instead of the folder pickers |
 | `-DryRun` | show what would happen, change nothing |
 | `-Uninstall` | remove the install |
 

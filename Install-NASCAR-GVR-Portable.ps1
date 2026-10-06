@@ -46,12 +46,13 @@ param(
     [string]$Track = "DAYTONA",
     [string]$Series = "2006NEXTEL",
     [switch]$Uninstall,
+    [switch]$NoGui,
     [switch]$DryRun,
     [switch]$ForceOverwrite
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-05-nascar-portable-4.2" # 4.2: no rundll32 nvcpl.dll calls (RunDLL error box)
+$Version = "2026-10-06-nascar-portable-4.4" # 4.4: Install.bat + folder pickers; PowerShell 2.0 (Windows 7)
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -60,7 +61,7 @@ $SourceRoot = $SourceRoot.TrimEnd("\")
 $LogDir = Join-Path $env:TEMP "NASCAR_GVR_Install"
 $LogFile = Join-Path $LogDir "install.log"
 
-trap { try { Log ("FATAL: " + $_.Exception.Message) } catch {}; Write-Host "FAIL: $($_.Exception.Message)" -ForegroundColor Red; exit 1 }
+trap { try { Log ("FATAL: " + $_.Exception.Message) } catch {}; Write-Host "FAIL: $($_.Exception.Message)" -ForegroundColor Red; try { if (!$DryRun) { Show-Message ("The installation stopped:" + [Environment]::NewLine + [Environment]::NewLine + $_.Exception.Message + [Environment]::NewLine + [Environment]::NewLine + "Details: " + $LogFile) "Error" } } catch {}; exit 1 }
 
 # GDI font registration. AddFontResource makes a newly copied font usable without a
 # reboot; the WM_FONTCHANGE broadcast tells running programs to re-read the font table.
@@ -83,6 +84,63 @@ function Fail($m) { throw $m }
 function New-Dir($p) { if (!(Test-Path $p)) { if ($DryRun) { Log "would create $p"; return }; New-Item -ItemType Directory -Force $p | Out-Null } }
 function Test-Admin { $id = [Security.Principal.WindowsIdentity]::GetCurrent(); (New-Object Security.Principal.WindowsPrincipal($id)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator) }
 function Assert-File($p, $label) { if (!(Test-Path $p)) { Fail "$label not found: $p" } }
+
+# ---- the two questions as Windows dialogs (Install.bat starts PowerShell with -STA) ----------
+# Windows folder dialogs need a single-threaded (STA) PowerShell. PowerShell 3+ is STA by
+# default; PowerShell 2.0 (Windows 7) only with -STA. Without it the typed prompts are used.
+function Test-CanShowDialogs {
+    if ($NoGui) { return $false }
+    if ([Threading.Thread]::CurrentThread.GetApartmentState() -ne "STA") { return $false }
+    try { Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; return $true } catch { return $false }
+}
+function New-DialogOwner {
+    # an invisible topmost window, so the dialog opens IN FRONT of the console
+    $f = New-Object System.Windows.Forms.Form
+    $f.TopMost = $true; $f.ShowInTaskbar = $false; $f.Opacity = 0
+    $f.StartPosition = "CenterScreen"; $f.Size = New-Object System.Drawing.Size(1, 1)
+    $f.Show(); $f.Activate()
+    return $f
+}
+# returns the chosen folder, or $null if the user cancelled
+function Select-Folder($description, $startPath, [switch]$FromComputer) {
+    $owner = New-DialogOwner
+    try {
+        $d = New-Object System.Windows.Forms.FolderBrowserDialog
+        $d.Description = $description
+        $d.ShowNewFolderButton = !$FromComputer
+        if ($FromComputer) { $d.RootFolder = [Environment+SpecialFolder]::MyComputer }
+        elseif ($startPath -and (Test-Path $startPath)) { $d.SelectedPath = $startPath }
+        if ($d.ShowDialog($owner) -eq [System.Windows.Forms.DialogResult]::OK) { return $d.SelectedPath }
+        return $null
+    } finally { $owner.Close() }
+}
+function Show-Message($text, $icon = "Information") {
+    if (!(Test-CanShowDialogs)) { return }
+    $owner = New-DialogOwner
+    try { [void][System.Windows.Forms.MessageBox]::Show($owner, $text, "NASCAR Team Racing installer", "OK", $icon) }
+    finally { $owner.Close() }
+}
+# can we create files there? (a mounted ISO / DVD drive is read-only - seen in a Windows 7 VM)
+function Test-WritableFolder($p) {
+    try {
+        if (!(Test-Path $p)) { New-Item -ItemType Directory -Force $p -ErrorAction Stop | Out-Null }
+        $probe = Join-Path $p ("write-test-" + [Guid]::NewGuid().ToString("N") + ".tmp")
+        [IO.File]::WriteAllText($probe, "x"); Remove-Item -LiteralPath $probe -Force
+        return $true
+    } catch { return $false }
+}
+# a mounted ISO or inserted disc is found without asking: data1.cab + GVRSETUP.INI saying NASCAR
+function Find-NascarDisc {
+    foreach ($d in @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
+        $r = $d.Root
+        try {
+            if (!(Test-Path (Join-Path $r "data1.cab"))) { continue }
+            $ini = Join-Path $r "GVRSETUP.INI"
+            if ((Test-Path $ini) -and ([IO.File]::ReadAllText($ini) -match '(?m)^OSName=NASCAR')) { return $r }
+        } catch { }
+    }
+    return $null
+}
 
 function Copy-Contents($s, $d, $label) {
     if (!(Test-Path $s)) { Warn "$label source missing, skipped: $s"; return }
@@ -218,7 +276,8 @@ function Fix-DirNames($game) {
     $probe = Join-Path $game "Options\Basic Settings"
     if (Test-Path -LiteralPath $probe) { Log "directory names already correct"; return }
 
-    $fix = Join-Path $PSScriptRoot "Tools\Fix-GvrDirNames.ps1"
+    # $SourceRoot, not $PSScriptRoot: PowerShell 2.0 (Windows 7) leaves $PSScriptRoot empty in scripts
+    $fix = Join-Path $SourceRoot "Tools\Fix-GvrDirNames.ps1"
     if (!(Test-Path $fix)) { Warn "Tools\Fix-GvrDirNames.ps1 missing - the game will crash on startup."; return }
     if ($DryRun) { Log "would normalise mangled directory names under $game"; return }
 
@@ -327,7 +386,7 @@ function Repoint-ShellPaths($shell) {
     }
     if (!(Test-Path $menuDir)) { Warn "no OPERATOR_MENUS folder; skipping path repoint"; return }
     Log "--- repointing operator-menu paths at $shell ---"
-    $files = Get-ChildItem -Recurse -File $menuDir -Include *.xml -ErrorAction SilentlyContinue
+    $files = @(Get-ChildItem -Recurse $menuDir -Include *.xml -ErrorAction SilentlyContinue | Where-Object { !$_.PSIsContainer })
     $changed = 0
     foreach ($f in $files) {
         $t = [IO.File]::ReadAllText($f.FullName)
@@ -452,7 +511,7 @@ function Apply-BytePatches($root) {
     $table = Join-Path $SourceRoot "Patches\nascar-bytepatches.txt"
     if (!(Test-Path $table)) { Fail "patch table missing: $table" }
     Log "--- OEM file patches ---"
-    $files = [ordered]@{}; $cur = $null
+    $files = New-Object System.Collections.Specialized.OrderedDictionary; $cur = $null   # [ordered] needs PowerShell 3
     foreach ($line in [IO.File]::ReadAllLines($table)) {
         if ($line -match '^\s*(#|$)') { continue }
         if ($line -match '^file (.+)$') { $cur = $Matches[1].Trim(); $files[$cur] = New-Object System.Collections.ArrayList; continue }
@@ -528,7 +587,7 @@ function Edit-GvrIoXml($game) {
     $t = [IO.File]::ReadAllText($p); $o = $t
     $nos = '<key char="j" name="NOS" mode="Default" messageID="GVRIO_NOS_PRESSED" event="onGvrNOSPressed" />'
     if ($t -notmatch 'name="NOS"') {
-        $t = [regex]::Replace($t, '(?m)^(\s*)(<key char="s" name="Start"[^\r\n]*)', ('$1' + $nos + "`r`n" + '$1$2'), 1)
+        $t = ([regex]'(?m)^(\s*)(<key char="s" name="Start"[^\r\n]*)').Replace($t, ('$1' + $nos + "`r`n" + '$1$2'), 1)
     }
     $t = [regex]::Replace($t, '(?m)^[ \t]*<key char="a" name="MotionDisable"[^\r\n]*\r?\n', '')
     if ($t -eq $o) { Log "  GvrIO.xml: already edited"; return }
@@ -547,7 +606,8 @@ function Disable-GammaSet($shell) {
     if (!(Test-Path $exe)) { return }
     if ($DryRun) { Log "would rename GammaSet.exe -> GammaSet.exe.arcade-disabled"; return }
     $dst = "$exe.arcade-disabled"
-    if (Test-Path $dst) { Remove-Item -LiteralPath $exe -Force } else { Rename-Item -LiteralPath $exe -NewName "GammaSet.exe.arcade-disabled" }
+    # [IO.File]::Move, not Rename-Item -LiteralPath (PowerShell 3+)
+    if (Test-Path $dst) { Remove-Item -LiteralPath $exe -Force } else { [IO.File]::Move($exe, $dst) }
     Log "  GammaSet.exe disabled (cabinet gamma/vibrance tool)"
 }
 
@@ -806,7 +866,7 @@ function Verify-Deployment($root, $game, $shell, $plus, $dbPath) {
         foreach ($m in $missing) { Warn "MISSING: $m" }
         Fail "verification failed ($($missing.Count) missing path(s))"
     }
-    $size = (Get-ChildItem -Recurse -File $root | Measure-Object -Sum Length).Sum
+    $size = (Get-ChildItem -Recurse $root | Where-Object { !$_.PSIsContainer } | Measure-Object -Sum Length).Sum
     Log ("all required files present ({0:N0} MB installed)" -f ($size / 1MB))
 }
 
@@ -844,19 +904,35 @@ if (!(Test-Admin)) {
     Warn "not elevated - fine for -DryRun, but the real install needs an Administrator window"
 }
 
+if ([string]::IsNullOrEmpty($InstallRoot) -and (Test-CanShowDialogs)) {
+    while ($true) {
+        $pick = Select-Folder "Where should NASCAR Team Racing be installed?`r`nPick a folder or drive (for example C:\Games) - a NASCAR_GVR folder is created inside it." ""
+        if (!$pick) { Log "cancelled - nothing was installed"; exit 0 }
+        $pick = $pick.TrimEnd("\")
+        if ($pick -match '^[A-Za-z]:$') { $InstallRoot = "$pick\NASCAR_GVR" }
+        # an existing install folder (any NASCAR* name, or one holding the game) is used as it is
+        elseif ((Split-Path -Leaf $pick) -match '(?i)^NASCAR' -or (Test-Path (Join-Path $pick "Game\NASCAR_GVR.exe"))) { $InstallRoot = $pick }
+        else { $InstallRoot = Join-Path $pick "NASCAR_GVR" }
+        if ($DryRun -or (Test-WritableFolder $InstallRoot)) { break }
+        Show-Message "Cannot write to:`r`n$InstallRoot`r`n`r`nThat is probably the game disc or a read-only drive. Pick a folder on your hard drive, for example C:\Games." "Warning"
+    }
+}
 if ([string]::IsNullOrEmpty($InstallRoot)) {
     Write-Host ""
     Write-Host "Where would you like to install NASCAR?" -ForegroundColor Cyan
     Write-Host "  Everything goes in this one folder - game, shell, GvrPlus and the database."
     Write-Host "  Nothing is written to C:\ root. About 800 MB is needed."
-    Write-Host "  Examples:  D:\Games\NASCAR     C:\Games\NASCAR     E:\Arcade\NASCAR"
+    Write-Host "  Examples:  C:\Games\NASCAR_GVR     D:\Games\NASCAR_GVR     E:\Arcade\NASCAR_GVR"
     Write-Host ""
-    $def = "D:\Games\NASCAR"
+    $def = "C:\Games\NASCAR_GVR"   # not D:\ - that is often the DVD drive holding the game disc
     $InstallRoot = Read-Host "Install folder [$def]"
     if ([string]::IsNullOrEmpty($InstallRoot)) { $InstallRoot = $def }
 }
 $InstallRoot = $InstallRoot.TrimEnd("\")
 if ($InstallRoot -match '^[A-Za-z]:$' -or $InstallRoot -match '^[A-Za-z]:\\$') { Fail "Refusing to install to a drive root: $InstallRoot" }
+if (!$DryRun -and !$Uninstall -and !(Test-WritableFolder $InstallRoot)) {
+    Fail "Cannot write to $InstallRoot - it is probably the game disc or a read-only drive. Choose a folder on your hard drive, for example C:\Games\NASCAR_GVR."
+}
 
 $Game = Join-Path $InstallRoot "Game"
 $Shell = Join-Path $InstallRoot "Shell"
@@ -880,15 +956,28 @@ elseif ((Test-Path $Game) -and !$ForceOverwrite -and !$DryRun) {
 }
 
 if (!(Test-Path (Join-Path $PayloadRoot "NASCAR\Game\NASCAR_GVR.exe")) -and !$ExtractIfMissing -and !$DryRun) {
-    # nothing unpacked yet and no -DiscPath: ask for the disc, like the NFSU installer
-    while ($true) {
-        Write-Host ""
-        Write-Host "Insert or mount the NASCAR Team Racing game disc (the one with data1.cab)." -ForegroundColor Cyan
-        $DiscPath = Read-Host "Disc drive or folder (e.g. E:\)"
-        $cand = $DiscPath.Trim().Trim('"').TrimEnd("\")
-        if ($cand -match '^[A-Za-z]:$') { $cand += "\" }
-        if ($cand -and (Test-Path (Join-Path $cand "data1.cab"))) { break }
-        Warn "data1.cab not found in '$DiscPath' - try again"
+    # nothing unpacked yet and no -DiscPath: find the mounted disc, else ask for it
+    $cand = Find-NascarDisc
+    if ($cand) { Log "game disc found: $cand" }
+    elseif (Test-CanShowDialogs) {
+        while ($true) {
+            $pick = Select-Folder "Select the NASCAR Team Racing v1.1 game disc: the drive of the mounted ISO or disc (or a folder holding data1.cab)." "" -FromComputer
+            if (!$pick) { Log "cancelled - nothing was installed"; exit 0 }
+            $cand = $pick.TrimEnd("\"); if ($cand -match '^[A-Za-z]:$') { $cand += "\" }
+            if (Test-Path (Join-Path $cand "data1.cab")) { break }
+            Show-Message "data1.cab was not found in:`r`n$pick`r`n`r`nMount the NASCAR ISO (right-click it, Mount) and pick its drive." "Warning"
+        }
+    }
+    else {
+        while ($true) {
+            Write-Host ""
+            Write-Host "Insert or mount the NASCAR Team Racing game disc (the one with data1.cab)." -ForegroundColor Cyan
+            $DiscPath = Read-Host "Disc drive or folder (e.g. E:\)"
+            $cand = $DiscPath.Trim().Trim('"').TrimEnd("\")
+            if ($cand -match '^[A-Za-z]:$') { $cand += "\" }
+            if ($cand -and (Test-Path (Join-Path $cand "data1.cab"))) { break }
+            Warn "data1.cab not found in '$DiscPath' - try again"
+        }
     }
     $DiscRoot = $cand
     $ExtractRoot = Join-Path $env:TEMP "NASCAR_GVR_Extract"
@@ -946,3 +1035,4 @@ Log "The HASP dongle check is satisfied by the GvrIO shim, so no cabinet hardwar
 Log "If anything goes wrong, read the game's own log first: $Game\LOG\trace00N.txt - it"
 Log "records the command line, the dongle result, every startup state and each FATAL."
 Log "============================================================"
+if (!$DryRun) { Show-Message ("NASCAR Team Racing is installed in:" + [Environment]::NewLine + $InstallRoot + [Environment]::NewLine + [Environment]::NewLine + "Start it with the NASCAR Team Racing shortcut on your desktop." + [Environment]::NewLine + "Settings: nascar_settings.ini in that folder.") }

@@ -16,7 +16,7 @@ $zip = Join-Path $repo "dist\$name.zip"
 
 # everything the installer reads (keep in sync with Join-Path $SourceRoot ... in the installer)
 $files = @(
-    "Install-NASCAR-GVR-Portable.ps1",
+    "Install.bat", "Install-NASCAR-GVR-Portable.ps1",
     "Patches\nascar-bytepatches.txt",
     "Deploy\PLUSDE.dll", "Deploy\GvrSqlite.dll", "Deploy\sqlite3.dll", "Deploy\game.db",
     "Tools\unshield.exe", "Tools\Fix-GvrDirNames.ps1",
@@ -41,12 +41,11 @@ foreach ($f in $files) {
 @"
 NASCAR Team Racing (GlobalVR arcade) - portable installer $Version
 
-1. Insert or mount your NASCAR Team Racing GlobalVR game disc.
-2. Open PowerShell as Administrator in this folder and run:
-     Set-ExecutionPolicy -Scope Process Bypass
-     .\Install-NASCAR-GVR-Portable.ps1
-3. Answer the two questions (install folder, disc drive), then start
-   "NASCAR Team Racing" from the desktop shortcut.
+1. Mount the NASCAR Team Racing v1.1 game disc ISO (right-click it, Mount),
+   or insert the disc.
+2. Double-click Install.bat in this folder and allow administrator rights.
+3. Pick where to install. When it says it is done, start "NASCAR Team Racing"
+   from the desktop shortcut.
 
 Settings: nascar_settings.ini in the install folder.
 Full guide, controls and findings: see the project page on GitHub.

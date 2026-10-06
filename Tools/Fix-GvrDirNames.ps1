@@ -75,8 +75,10 @@ if ($DryRun) { Log "  (dry run - nothing will be renamed)" }
 
 # Deepest-first, so renaming a child never invalidates a parent path we still
 # have queued. Each rename only touches the leaf component.
-$all = Get-ChildItem -LiteralPath $Root -Recurse -Directory -Force -ErrorAction SilentlyContinue |
-       Sort-Object { $_.FullName.Length } -Descending
+# (no -Directory / Rename-Item -LiteralPath: both need PowerShell 3, and Windows 7 has 2.0)
+$all = @(Get-ChildItem -LiteralPath $Root -Recurse -Force -ErrorAction SilentlyContinue |
+         Where-Object { $_.PSIsContainer } |
+         Sort-Object { $_.FullName.Length } -Descending)
 
 $renamed = 0; $already = 0; $clash = 0
 foreach ($d in $all) {
@@ -94,14 +96,14 @@ foreach ($d in $all) {
 
     $rel = $d.FullName.Substring($Root.Length).TrimStart('\')
     Log "  rename $rel  ->  $want"
-    if (-not $DryRun) { Rename-Item -LiteralPath $d.FullName -NewName $want -Force }
+    if (-not $DryRun) { [IO.Directory]::Move($d.FullName, $target) }
     $renamed++
 }
 
 # Count the ones that were already right, for an honest summary.
 foreach ($n in $CorrectNames) {
-    $already += (Get-ChildItem -LiteralPath $Root -Recurse -Directory -Force -Filter $n -ErrorAction SilentlyContinue |
-                 Measure-Object).Count
+    $already += (Get-ChildItem -LiteralPath $Root -Recurse -Force -Filter $n -ErrorAction SilentlyContinue |
+                 Where-Object { $_.PSIsContainer } | Measure-Object).Count
 }
 
 Log ""
