@@ -1253,3 +1253,20 @@ whole stack and routes everything into one `LOG` folder in the install root.
   `Deploy\GvrSqlite.dll`, `src\GvrSqlite\GvrSqlite.cs`, documented `[Debug]` in
   `src\NascarLaunch\nascar_settings.ini`, README note, installer `$Version` -> 4.5. Dev-tree sources
   mirrored to `NASCAR\src`.
+
+## 2026-10-07 — race now fills the screen by default (v1.0.5)
+
+v1.0.4 shipped `[Display] Width=1280 Height=720 Fullscreen=false Borderless=false`, and the
+installer defaulted `-Width 1280 -Height 720`, so on any desktop larger than 720p the race ran as
+a small 1280x720 window while the shell was fullscreen (user-reported). The race obeys the launcher's
+`-windowed -width/-height`; nothing was wrong with the engine.
+
+* **Fix (default-only):** shipped `nascar_settings.ini` now `Width=0 Height=0 Borderless=true`
+  (0 = primary screen size; the launcher resolves it and strips the frame to fill the monitor,
+  sharp and native, desktop resolution untouched, alt-tab intact). Installer defaults `$Width/$Height`
+  -> 0, and it now seeds `Borderless=true`, or `Borderless=false`+`Fullscreen=true` when `-Fullscreen`
+  is passed (exclusive fullscreen still available). Engine's 1600px mode cap is already lifted by the
+  GvrIO shim, so native 1080p/1440p windows are fine.
+* **Scope:** the installer only seeds a FRESH ini (it keeps an existing one), so users updating in
+  place edit the two lines themselves (Width/Height=0, Borderless=true) or re-install with
+  -ForceOverwrite. v1.0.4 was already published, so this ships as **v1.0.5**, not a 1.0.4 rebuild.

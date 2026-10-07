@@ -41,8 +41,8 @@ param(
     [switch]$SetOemRev,
     [switch]$NoShortcut,
     [switch]$Fullscreen,
-    [int]$Width = 1280,
-    [int]$Height = 720,
+    [int]$Width = 0,     # 0 = use the primary screen size (borderless fills it, sharp)
+    [int]$Height = 0,
     [string]$Track = "DAYTONA",
     [string]$Series = "2006NEXTEL",
     [switch]$Uninstall,
@@ -52,7 +52,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-07-nascar-portable-4.5" # 4.5: [Debug] Log -> install LOG folder (PC config + native crash filter in both exes)
+$Version = "2026-10-07-nascar-portable-4.6" # 4.6: race fills the screen by default (borderless, screen size)
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -805,11 +805,15 @@ function Install-Launcher($root, $game, $shell) {
             $t = $t -replace '(?m)^Width=.*$',  "Width=$Width"
             $t = $t -replace '(?m)^Height=.*$', "Height=$Height"
             $t = $t -replace '(?m)^Fullscreen=.*$', ("Fullscreen=" + $(if ($Fullscreen) { "true" } else { "false" }))
+            # Default to a borderless window that fills the screen (the race is windowed otherwise
+            # and, at a size smaller than the desktop, shows as a small window). -Fullscreen opts
+            # into exclusive fullscreen instead, so Borderless must be off for it to take effect.
+            $t = $t -replace '(?m)^Borderless=.*$', ("Borderless=" + $(if ($Fullscreen) { "false" } else { "true" }))
             $t = $t -replace '(?m)^Track=.*$',  "Track=$Track"
             $t = $t -replace '(?m)^Series=.*$', "Series=$Series"
             if ($SkipShell) { $t = $t -replace '(?m)^Mode=shell\s*$', "Mode=race" }
             [IO.File]::WriteAllText($iniDst, $t)
-            Log "  nascar_settings.ini seeded ($Width x $Height, $(if($Fullscreen){'fullscreen'}else{'windowed'}))"
+            Log ("  nascar_settings.ini seeded (" + $(if ($Width -le 0) { "screen size" } else { "$Width x $Height" }) + ", " + $(if ($Fullscreen) { "fullscreen" } else { "borderless" }) + ")")
         }
     }
 
