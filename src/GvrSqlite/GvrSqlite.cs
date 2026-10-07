@@ -77,40 +77,67 @@ namespace GvrSqlite
         }
     }
 
-    // ---- diagnostic log (remove for release) ------------------------------
+    // ---- diagnostic log ----------------------------------------------------
+    // Turning this on is meant to be trivial for an end user who hit a crash and
+    // was asked for a log: set [Debug] Log=true in the install's gvr_settings.ini
+    // (or nascar_settings.ini), start the game, reproduce, and hand over the file
+    // the game wrote to the LOG folder in the install root. No environment
+    // variable, no log off/on, no elevation - the same ergonomics as every other
+    // setting in that ini.
     internal sealed class Log
     {
         private static readonly object _lock = new object();
-        // Off by default. Set env var GVRSQLITE_LOG (to anything) to enable tracing.
-        private static readonly bool _on = (Environment.GetEnvironmentVariable("GVRSQLITE_LOG") != null);
 
-        // Where the trace goes. GVRSQLITE_LOG does double duty: a value that looks
-        // like a path IS the path, anything else (e.g. "1") just switches tracing
-        // on and we fall back to %TEMP%.
+        // kernel32 ini reader - the exact same API GvrLaunch.exe uses to read this
+        // file, so the flag behaves identically in both.
+        [DllImport("kernel32.dll", CharSet = CharSet.Ansi)]
+        private static extern int GetPrivateProfileStringA(
+            string section, string key, string def,
+            System.Text.StringBuilder ret, int size, string file);
+
+        // Enabled by EITHER the ini flag (the user-facing switch) OR the legacy
+        // GVRSQLITE_LOG env var (kept for existing tooling / scripted captures,
+        // and so a value that looks like a path can still force the destination).
+        private static readonly bool _on;
+
+        // Where the trace goes, in priority order:
+        //   1. GVRSQLITE_LOG set to a path (contains \ / :)  -> that exact file.
+        //   2. a LOG folder in the install root (the dir holding the settings ini),
+        //      one file per process: LOG\gvrsqlite-<exe>.log. This is the default
+        //      and what an end user is pointed at.
+        //   3. %TEMP%\gvrsqlite.log, if the install root cannot be found.
         //
-        // This used to be a hardcoded "C:\gvrsqlite.log", which is the worst kind
-        // of bug: creating a file in the root of C: needs elevation, the write
-        // threw, the catch below swallowed it, and the trace looked *empty* rather
-        // than blocked - so the one diagnostic that would have explained a shell
-        // failure silently produced nothing. %TEMP% always works for the host.
-        private static readonly string _path = ResolvePath();
+        // It is NEVER a hardcoded "C:\gvrsqlite.log" - that was a real bug: the
+        // root of C: needs elevation, the write threw, the catch below swallowed
+        // it, and the trace looked *empty* rather than blocked, so the one
+        // diagnostic that would have explained a shell failure produced nothing.
+        private static readonly string _path;
 
-        private static string ResolvePath()
-        {
-            string v = Environment.GetEnvironmentVariable("GVRSQLITE_LOG");
-            if (v != null && (v.IndexOf('\\') >= 0 || v.IndexOf('/') >= 0 || v.IndexOf(':') >= 0))
-                return v;
-            try { return System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gvrsqlite.log"); }
-            catch { return "gvrsqlite.log"; }
-        }
+        private static bool _started;   // first write of this run truncates
 
-        // We are the only managed code WE control that gets loaded into the host
-        // process (the shell loads us via PLUSDE). Hooking UnhandledException
-        // here turns "the shell just dies with 0xC000041D" into an actual
-        // exception type, message and stack in the trace log - there is no other
-        // way to see it without a CLR 1.1 debugger.
         static Log()
         {
+            bool on = false;
+            string iniPath = FindSettingsIni();   // full path to the settings ini, or null
+
+            if (iniPath != null && IniBool(iniPath, "Debug", "Log", false))
+                on = true;
+
+            string env = null;
+            try { env = Environment.GetEnvironmentVariable("GVRSQLITE_LOG"); }
+            catch { }
+            if (env != null) on = true;
+
+            _on = on;
+            // Resolve the destination only when enabled - resolving must have no
+            // side effect (it used to create the LOG folder even with logging off).
+            _path = on ? ResolvePath(env, iniPath) : null;
+
+            // We are the only managed code WE control that gets loaded into the host
+            // process (the shell loads us via PLUSDE). Hooking UnhandledException
+            // here turns "the shell just dies with 0xC000041D" into an actual
+            // exception type, message and stack in the trace log - there is no other
+            // way to see it without a CLR 1.1 debugger.
             if (!_on) return;
             try
             {
@@ -118,6 +145,91 @@ namespace GvrSqlite
                     new UnhandledExceptionEventHandler(OnUnhandled);
             }
             catch { }
+        }
+
+        // Walk up from the places this DLL might be loaded from, looking for the
+        // install's settings ini. The directory that holds it is the install root
+        // (the same anchor GvrLaunch.exe uses). We accept either title's ini so the
+        // one shared provider logs into whichever install it is running under.
+        private static string FindSettingsIni()
+        {
+            string[] names = new string[] { "gvr_settings.ini", "nascar_settings.ini" };
+            string[] starts = new string[3];
+            try { starts[0] = System.IO.Path.GetDirectoryName(typeof(Log).Assembly.Location); }
+            catch { }
+            try { starts[1] = AppDomain.CurrentDomain.BaseDirectory; }
+            catch { }
+            try { starts[2] = System.IO.Directory.GetCurrentDirectory(); }
+            catch { }
+
+            for (int s = 0; s < starts.Length; s++)
+            {
+                string d = starts[s];
+                for (int up = 0; up <= 8 && d != null && d.Length > 0; up++)
+                {
+                    for (int n = 0; n < names.Length; n++)
+                    {
+                        try
+                        {
+                            string cand = System.IO.Path.Combine(d, names[n]);
+                            if (System.IO.File.Exists(cand)) return cand;
+                        }
+                        catch { }
+                    }
+                    string parent;
+                    try { parent = System.IO.Path.GetDirectoryName(d); }
+                    catch { break; }
+                    if (parent == null || parent == d) break;
+                    d = parent;
+                }
+            }
+            return null;
+        }
+
+        private static bool IniBool(string ini, string section, string key, bool def)
+        {
+            try
+            {
+                System.Text.StringBuilder sb = new System.Text.StringBuilder(32);
+                GetPrivateProfileStringA(section, key, "", sb, sb.Capacity, ini);
+                string v = sb.ToString();
+                if (v == null) return def;
+                v = v.Trim().ToLower(CultureInfo.InvariantCulture);
+                if (v.Length == 0) return def;
+                return !(v == "false" || v == "0" || v == "no" || v == "off");
+            }
+            catch { return def; }
+        }
+
+        private static string ProcName()
+        {
+            try { return System.Diagnostics.Process.GetCurrentProcess().ProcessName; }
+            catch { return "gvr"; }
+        }
+
+        private static string ResolvePath(string env, string iniPath)
+        {
+            // 1. explicit path in the env var wins (contains a separator)
+            if (env != null && (env.IndexOf('\\') >= 0 || env.IndexOf('/') >= 0 || env.IndexOf(':') >= 0))
+                return env;
+
+            // 2. preferred: a LOG folder in the install root, one file per process.
+            //    The folder is created lazily on the first write (W), not here, so
+            //    merely resolving the path leaves the disk untouched.
+            if (iniPath != null)
+            {
+                try
+                {
+                    string root = System.IO.Path.GetDirectoryName(iniPath);
+                    return System.IO.Path.Combine(System.IO.Path.Combine(root, "LOG"),
+                                                  "gvrsqlite-" + ProcName() + ".log");
+                }
+                catch { }
+            }
+
+            // 3. fallback that always works for the host
+            try { return System.IO.Path.Combine(System.IO.Path.GetTempPath(), "gvrsqlite.log"); }
+            catch { return "gvrsqlite.log"; }
         }
 
         private static void OnUnhandled(object sender, UnhandledExceptionEventArgs e)
@@ -145,7 +257,30 @@ namespace GvrSqlite
             {
                 lock (_lock)
                 {
-                    System.IO.StreamWriter sw = new System.IO.StreamWriter(_path, true);
+                    if (!_started)
+                    {
+                        // create the LOG folder on demand (only reached when enabled)
+                        try
+                        {
+                            string dir = System.IO.Path.GetDirectoryName(_path);
+                            if (dir != null && dir.Length > 0 && !System.IO.Directory.Exists(dir))
+                                System.IO.Directory.CreateDirectory(dir);
+                        }
+                        catch { }
+                    }
+                    // First write of the run truncates, so each launch gets a clean
+                    // file (append within the run). A bug report is then "reproduce
+                    // once, grab the file" and the log holds exactly that session.
+                    System.IO.StreamWriter sw = new System.IO.StreamWriter(_path, _started);
+                    if (!_started)
+                    {
+                        _started = true;
+                        int pid = 0;
+                        try { pid = System.Diagnostics.Process.GetCurrentProcess().Id; }
+                        catch { }
+                        sw.WriteLine("==== GvrSqlite  " + DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss")
+                            + "  proc=" + ProcName() + " pid=" + pid + " ====");
+                    }
                     sw.WriteLine(DateTime.Now.ToString("HH:mm:ss.fff") + "  " + s);
                     sw.Close();
                 }

@@ -75,6 +75,84 @@ static void die(const char* fmt, ...)
     ExitProcess(1);
 }
 
+// ---------------------------------------------------------------- PC configuration dump
+// The single most useful thing in a "works on my machine, not theirs" report - the GPU driver
+// above all. Pure registry + Win32, no WMI/COM, so it runs on everything XP..Win11. Switched on
+// by nascar_settings.ini [Debug] Log=true (same flag the shim and the SQLite provider read).
+static bool reg_read_sz(HKEY root, const char* sub, const char* val, char* out, DWORD n)
+{
+    out[0] = 0;
+    HKEY k;
+    if (RegOpenKeyExA(root, sub, 0, KEY_READ | KEY_WOW64_64KEY, &k) != ERROR_SUCCESS) return false;
+    DWORD type = 0, cb = n - 1;
+    LONG r = RegQueryValueExA(k, val, NULL, &type, (BYTE*)out, &cb);
+    RegCloseKey(k);
+    if (r != ERROR_SUCCESS) { out[0] = 0; return false; }
+    if (type == REG_DWORD && cb == 4) { DWORD d = *(DWORD*)out; snprintf(out, n, "%lu", d); return true; }
+    out[(cb < n) ? cb : n - 1] = 0;   // REG_SZ may omit the terminator
+    return true;
+}
+
+static void log_pc_config(void)
+{
+    logf("---- PC configuration (diagnostic) ----");
+
+    char prod[256], disp[64], build[32], ubr[32];
+    reg_read_sz(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "ProductName", prod, sizeof(prod));
+    reg_read_sz(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "DisplayVersion", disp, sizeof(disp));
+    reg_read_sz(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "CurrentBuildNumber", build, sizeof(build));
+    reg_read_sz(HKEY_LOCAL_MACHINE, "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion", "UBR", ubr, sizeof(ubr));
+    logf("os      : %s %s (build %s.%s)", prod, disp, build, ubr[0] ? ubr : "0");
+
+    SYSTEM_INFO si; GetNativeSystemInfo(&si);
+    const char* arch = si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_AMD64 ? "x64" :
+                       si.wProcessorArchitecture == PROCESSOR_ARCHITECTURE_INTEL ? "x86" :
+                       si.wProcessorArchitecture == 12 /*ARM64*/ ? "ARM64" : "?";
+    logf("arch    : %s, %lu logical CPUs", arch, si.dwNumberOfProcessors);
+
+    char cpu[256], vendor[64];
+    reg_read_sz(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", "ProcessorNameString", cpu, sizeof(cpu));
+    reg_read_sz(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\CentralProcessor\\0", "VendorIdentifier", vendor, sizeof(vendor));
+    logf("cpu     : %s (%s)", cpu[0] ? cpu : "?", vendor);
+
+    MEMORYSTATUSEX ms; ms.dwLength = sizeof(ms);
+    if (GlobalMemoryStatusEx(&ms))
+        logf("ram     : %.1f GB total, %.1f GB free",
+             ms.ullTotalPhys / 1073741824.0, ms.ullAvailPhys / 1073741824.0);
+
+    char sysman[128], sysprod[128], bbman[128], bbprod[128], bios[128], biosdate[64];
+    reg_read_sz(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "SystemManufacturer", sysman, sizeof(sysman));
+    reg_read_sz(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "SystemProductName", sysprod, sizeof(sysprod));
+    reg_read_sz(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "BaseBoardManufacturer", bbman, sizeof(bbman));
+    reg_read_sz(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "BaseBoardProduct", bbprod, sizeof(bbprod));
+    reg_read_sz(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "BIOSVersion", bios, sizeof(bios));
+    reg_read_sz(HKEY_LOCAL_MACHINE, "HARDWARE\\DESCRIPTION\\System\\BIOS", "BIOSReleaseDate", biosdate, sizeof(biosdate));
+    logf("system  : %s %s", sysman, sysprod);
+    logf("mainboard: %s %s", bbman, bbprod);
+    logf("bios    : %s (%s)", bios, biosdate);
+
+    // every display adapter + its driver, from the display device-class key
+    static const char* CLS = "SYSTEM\\CurrentControlSet\\Control\\Class\\{4d36e968-e325-11ce-bfc1-08002be10318}";
+    for (int i = 0; i < 16; ++i) {
+        char keypath[320]; snprintf(keypath, sizeof(keypath), "%s\\%04d", CLS, i);
+        char desc[256];
+        if (!reg_read_sz(HKEY_LOCAL_MACHINE, keypath, "DriverDesc", desc, sizeof(desc)) || !desc[0]) continue;
+        char dver[64], ddate[64], prov[128];
+        reg_read_sz(HKEY_LOCAL_MACHINE, keypath, "DriverVersion", dver, sizeof(dver));
+        reg_read_sz(HKEY_LOCAL_MACHINE, keypath, "DriverDate", ddate, sizeof(ddate));
+        reg_read_sz(HKEY_LOCAL_MACHINE, keypath, "ProviderName", prov, sizeof(prov));
+        logf("gpu[%d]  : %s  drv %s (%s, %s)", i, desc,
+             dver[0] ? dver : "?", ddate[0] ? ddate : "?", prov[0] ? prov : "?");
+    }
+
+    DEVMODEA dm; dm.dmSize = sizeof(dm); dm.dmDriverExtra = 0;
+    if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm))
+        logf("display : %lux%lu %lubpp @ %luHz (desktop)",
+             dm.dmPelsWidth, dm.dmPelsHeight, dm.dmBitsPerPel, dm.dmDisplayFrequency);
+
+    logf("---- end PC configuration ----");
+}
+
 // ---------------------------------------------------------------- ini
 
 static int ini_int(const char* section, const char* key, int def)
@@ -430,7 +508,12 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     GetModuleFileNameA(NULL, g_root, MAX_PATH);
     PathRemoveFileSpecA(g_root);
     snprintf(g_ini, sizeof(g_ini), "%s\\nascar_settings.ini", g_root);
-    snprintf(g_log, sizeof(g_log), "%s\\nascarlaunch.log", g_root);
+    // All diagnostics go into one LOG folder in the install root - the same folder the
+    // GvrIO shim and the SQLite provider write to - so a bug report is "zip the LOG folder".
+    char logdir[MAX_PATH];
+    snprintf(logdir, sizeof(logdir), "%s\\LOG", g_root);
+    CreateDirectoryA(logdir, NULL);
+    snprintf(g_log, sizeof(g_log), "%s\\nascarlaunch.log", logdir);
 
     // keep the log from growing forever
     HANDLE hf = CreateFileA(g_log, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
@@ -442,6 +525,10 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     logf("--- NascarLaunch (root: %s) ---", g_root);
     if (!PathFileExistsA(g_ini))
         die("nascar_settings.ini was not found next to the launcher:\n%s", g_ini);
+
+    // [Debug] Log=true also dumps the PC's hardware/driver profile (for "works on my machine"
+    // reports) and is the same flag that switches on the GvrIO shim and SQLite provider logs.
+    if (ini_bool("Debug", "Log", false)) log_pc_config();
 
     Settings s;
     load_settings(s);

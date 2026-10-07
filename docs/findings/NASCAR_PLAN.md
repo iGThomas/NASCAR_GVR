@@ -1221,3 +1221,35 @@ Full write-up: `NASCAR_FINDINGS.md` §14; per-button table: `NASCAR_CONTROLS.md`
   * `docs\findings\README.md`: bulleted findings with explanations, plus the full documents.
 * **User-verified 2026-10-05.** A fresh install from the release folder into
   `D:\Games\NASCAR_Test` runs with free play, with no calibration screen and settings untouched.
+
+## 2026-10-07 — one-switch diagnostic logging ported from NFSU (LOG folder, PC config, native crash filter)
+
+Ported the NFSU diagnostic-logging feature so a bug report is "set `[Debug] Log=true`, reproduce
+once, zip the `LOG` folder". The flag was already read by the GvrIO shim; this extends it to the
+whole stack and routes everything into one `LOG` folder in the install root.
+
+* **`NascarLaunch.exe`** — its log moved from `<root>\nascarlaunch.log` to `<root>\LOG\nascarlaunch.log`,
+  and with `[Debug] Log=true` it now writes a **PC-configuration dump** first (OS build, CPU, RAM,
+  motherboard/BIOS, every display adapter + **driver version/date**, desktop mode) via registry +
+  Win32 only (no WMI/COM, works XP..Win11). The key artifact for "works on my machine" reports —
+  on the dev box it shows both the Intel iGPU and the NVIDIA dGPU with their driver versions.
+* **`GvrIO.dll` (GvrIOShim)** — its trace moved to `<root>\LOG\gvrioshim-<exe>-<pid>.log` (was next
+  to the exe), and it now installs a native `SetUnhandledExceptionFilter` (faulting module+offset,
+  AV address, x86 registers), chained to the previous filter, only when logging is on. This is the
+  gap that mattered: the **shell (AMPlayer) had no native crash log**; the race has the engine's own
+  BADSTUFF trace but our DllMain runs first so this is a backstop there too.
+* **`GvrSqlite.dll`** — shared provider already carries the `[Debug] Log` switch (reads
+  `nascar_settings.ini` too) and writes `<root>\LOG\gvrsqlite-<exe>.log`. Rebuilt with the real 1.1
+  `csc` into `Deploy\GvrSqlite.dll`; `Test-GvrSqlite.ps1` 13/13 pass; `src\GvrSqlite\GvrSqlite.cs`
+  refreshed from the canonical `D:\NFSU_GVR\GvrSqlite\GvrSqlite.cs`.
+* **Cross-title DB:** no fix needed on the NASCAR side — `NascarLaunch::ensure_db_env` already pins
+  `GVRSQLITE_DB_NAS1` to *this* install's own `game.db` first, and the provider checks `..._NAS1`
+  before NFSU's `GVRSQLITE_DB`, so NASCAR stays on its own database. (This is the mirror of the NFSU
+  launcher fix made the same day.)
+* **Verified:** both native builds OK (VS vcvars32); launcher smoke-tested in a fake tree
+  (`Log=true` writes the PC dump, `Log=false` does not); shim load-tested in a 32-bit host — creates
+  `LOG\gvrioshim-*.log` and installs the filter. Not committed.
+* **Shipped (NASCAR_GIT):** `src\NascarLaunch\build\NascarLaunch.exe`, `src\GvrIOShim\build\GvrIO.dll`,
+  `Deploy\GvrSqlite.dll`, `src\GvrSqlite\GvrSqlite.cs`, documented `[Debug]` in
+  `src\NascarLaunch\nascar_settings.ini`, README note, installer `$Version` -> 4.5. Dev-tree sources
+  mirrored to `NASCAR\src`.

@@ -58,7 +58,9 @@ In the install folder. The main ones:
 
 - `[Display]` — `Width`, `Height`, `Fullscreen`, `Borderless`
 - `[Controller]` / `[Frontend]` — the gamepad button map for the race and the menus
-- `[Debug] Log=true` — writes a trace when something goes wrong
+- `[Debug] Log=true` — writes diagnostics to a `LOG` folder in the install root: your PC config
+  (CPU, motherboard, GPU + driver version), the launch timeline, a native crash filter for the
+  shell and the race, and the database log. Reproduce the problem once, then zip the `LOG` folder.
 
 ### Installer options
 

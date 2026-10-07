@@ -625,6 +625,43 @@ static bool log_requested(void)
            _stricmp(v, "on") == 0;
 }
 
+// ---------------------------------------------------------------- crash capture
+// The shell (AMPlayer.exe) has no native crash log of its own; the race has the engine's own
+// BADSTUFF filter into trace00N.txt but our DllMain runs first, so this is a useful backstop in
+// both. We only LOG the faulting module+offset, then chain to whatever filter was there before
+// (the game installs its own during main(), WER otherwise), so crash behaviour is unchanged.
+// Installed only when logging is on, to keep a normal play session untouched.
+static LPTOP_LEVEL_EXCEPTION_FILTER g_prevFilter = NULL;
+
+static LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep)
+{
+    __try {
+        EXCEPTION_RECORD* er = ep ? ep->ExceptionRecord : NULL;
+        void* addr = er ? er->ExceptionAddress : NULL;
+        unsigned long code = er ? er->ExceptionCode : 0;
+        char mod[MAX_PATH] = "?"; unsigned long off = 0;
+        HMODULE hm = NULL;
+        if (addr && GetModuleHandleExA(
+                GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                (LPCSTR)addr, &hm) && hm) {
+            GetModuleFileNameA(hm, mod, MAX_PATH);
+            off = (unsigned long)((DWORD_PTR)addr - (DWORD_PTR)hm);
+        }
+        const char* b = strrchr(mod, '\\'); b = b ? b + 1 : mod;
+        logf("*** UNHANDLED EXCEPTION code=0x%08lX addr=%p  %s+0x%lX ***", code, addr, b, off);
+        if (er && code == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2)
+            logf("    access violation %s address %p",
+                 er->ExceptionInformation[0] ? "writing" : "reading",
+                 (void*)er->ExceptionInformation[1]);
+        CONTEXT* c = ep ? ep->ContextRecord : NULL;
+        if (c) logf("    EIP=%08lX ESP=%08lX EBP=%08lX EAX=%08lX EBX=%08lX ECX=%08lX EDX=%08lX",
+                    (unsigned long)c->Eip, (unsigned long)c->Esp, (unsigned long)c->Ebp,
+                    (unsigned long)c->Eax, (unsigned long)c->Ebx, (unsigned long)c->Ecx,
+                    (unsigned long)c->Edx);
+    } __except (EXCEPTION_EXECUTE_HANDLER) { }
+    return g_prevFilter ? g_prevFilter(ep) : EXCEPTION_CONTINUE_SEARCH;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH) {
@@ -638,11 +675,31 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
         pad_attach(hInst, g_isShell);          // first: it also locates nascar_settings.ini
         if (log_requested()) {
             g_logging = true;
-            GetModuleFileNameA(NULL, g_logPath, MAX_PATH);
-            char* slash = strrchr(g_logPath, '\\');
-            if (slash) { slash[1] = 0; strcat(g_logPath, "gvrioshim.log"); }
-            else strcpy(g_logPath, "gvrioshim.log");
-            logf("--- GvrIO shim attached ---");
+            const char* proc = g_isShell ? "AMPlayer" : "NASCAR_GVR";
+            // Prefer the install-root LOG folder (shared with the launcher and the SQLite
+            // provider); fall back to next to the executable if the root can't be found.
+            char ini[MAX_PATH]; bool placed = false;
+            if (shim_settings_path(ini, sizeof ini)) {
+                char* s = strrchr(ini, '\\');
+                if (s) {
+                    *s = 0;                                    // <install root>
+                    char logdir[MAX_PATH];
+                    _snprintf(logdir, sizeof logdir, "%s\\LOG", ini); logdir[sizeof logdir - 1] = 0;
+                    CreateDirectoryA(logdir, NULL);
+                    _snprintf(g_logPath, sizeof g_logPath, "%s\\gvrioshim-%s-%lu.log",
+                              logdir, proc, GetCurrentProcessId());
+                    g_logPath[sizeof g_logPath - 1] = 0;
+                    placed = true;
+                }
+            }
+            if (!placed) {
+                GetModuleFileNameA(NULL, g_logPath, MAX_PATH);
+                char* slash = strrchr(g_logPath, '\\');
+                if (slash) { slash[1] = 0; strcat(g_logPath, "gvrioshim.log"); }
+                else strcpy(g_logPath, "gvrioshim.log");
+            }
+            logf("--- GvrIO shim attached (proc=%s pid=%lu) ---", proc, GetCurrentProcessId());
+            g_prevFilter = SetUnhandledExceptionFilter(crash_filter);
         }
         // Before anything in this process reads the registry: the race imports this DLL,
         // and NascarLaunch loads it into the front end before AMPlayer's first instruction.

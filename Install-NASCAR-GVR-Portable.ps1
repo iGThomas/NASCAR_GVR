@@ -52,7 +52,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-06-nascar-portable-4.4" # 4.4: Install.bat + folder pickers; PowerShell 2.0 (Windows 7)
+$Version = "2026-10-07-nascar-portable-4.5" # 4.5: [Debug] Log -> install LOG folder (PC config + native crash filter in both exes)
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
