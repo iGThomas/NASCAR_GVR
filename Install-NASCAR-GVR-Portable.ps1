@@ -52,7 +52,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-07-nascar-portable-4.6" # 4.6: race fills the screen by default (borderless, screen size)
+$Version = "2026-10-09-nascar-portable-4.7" # 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc (unpatchable Dongle.dll); verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -525,31 +525,82 @@ function Apply-BytePatches($root) {
         return $true
     }
     $done = 0; $already = 0
+    $unpatched = New-Object System.Collections.ArrayList   # present but matched neither OEM nor our patch -> a different build
+    $missing   = New-Object System.Collections.ArrayList   # not found in the payload at all
+    # Files the game cannot start without. If one of these will not patch, the disc is not the
+    # supported build, so we stop loudly (below) instead of finishing an install that looks fine
+    # and then hangs at launch with no window.
+    $critical = @("Shell\bin\Dongle.dll")
+    # Format a slice of a byte array as lowercase hex, for "expected vs found" diagnostics.
+    function HexOf($data, $off, $len) {
+        if ($off -ge $data.Length) { return "<past end of file>" }
+        $end = [Math]::Min($off + $len, $data.Length)
+        $sb = New-Object System.Text.StringBuilder
+        for ($i = $off; $i -lt $end; $i++) { [void]$sb.AppendFormat("{0:x2}", $data[$i]) }
+        return $sb.ToString()
+    }
     foreach ($rel in $files.Keys) {
         $path = Join-Path $root $rel
-        if (!(Test-Path -LiteralPath $path)) { if ($DryRun) { Log "  would patch $rel" } else { Warn "  $rel not found - not patched" }; continue }
+        if (!(Test-Path -LiteralPath $path)) {
+            if ($DryRun) { Log "  $rel : not present (would skip)" } else { Warn "  $rel : not found - not patched" }
+            [void]$missing.Add($rel); continue
+        }
         $data = [IO.File]::ReadAllBytes($path)
         $isOem = $true; $isNew = $true
         foreach ($p in $files[$rel]) {
             if (!(Matches $data $p[0] (HexBytes $p[1]))) { $isOem = $false }
             if (!(Matches $data $p[0] (HexBytes $p[2]))) { $isNew = $false }
         }
-        if ($isNew) { $already++; continue }
+        if ($isNew) { Log ("  {0} : already patched ({1} change(s), {2} bytes)" -f $rel, $files[$rel].Count, $data.Length); $already++; continue }
         if (!$isOem -and (Test-Path -LiteralPath "$path.oem")) {
             # an older release's patch: start again from the OEM copy kept beside it
             $orig = [IO.File]::ReadAllBytes("$path.oem"); $origOk = $true
             foreach ($p in $files[$rel]) { if (!(Matches $orig $p[0] (HexBytes $p[1]))) { $origOk = $false } }
             if ($origOk) { $data = $orig; $isOem = $true; Log "  $rel : updating an older patch from $rel.oem" }
         }
-        if (!$isOem) { Warn "  $rel is not the expected OEM file - left unpatched"; continue }
-        if ($DryRun) { Log "  would patch $rel ($($files[$rel].Count) change(s))"; continue }
+        if (!$isOem) {
+            # Matches neither the OEM bytes nor our patched bytes: a different build of this file.
+            # Log the first few offsets with expected-vs-found bytes so a support log pins the disc.
+            Warn ("  {0} : does not match the supported v1.1 build - left unpatched ({1} bytes)" -f $rel, $data.Length)
+            $shown = 0
+            foreach ($p in $files[$rel]) {
+                if (!(Matches $data $p[0] (HexBytes $p[1]))) {
+                    Warn ("      offset 0x{0:x}: expected OEM {1} / patched {2}, found {3}" -f $p[0], $p[1], $p[2], (HexOf $data $p[0] ($p[1].Length / 2)))
+                    $shown++; if ($shown -ge 3) { Warn "      (further mismatches not shown)"; break }
+                }
+            }
+            [void]$unpatched.Add($rel); continue
+        }
+        if ($DryRun) { Log "  $rel : OEM v1.1 ok - would patch ($($files[$rel].Count) change(s))"; continue }
         $bak = "$path.oem"
         if (!(Test-Path -LiteralPath $bak)) { [IO.File]::WriteAllBytes($bak, $data) }
         foreach ($p in $files[$rel]) { $b = HexBytes $p[2]; [Array]::Copy($b, 0, $data, $p[0], $b.Length) }
         [IO.File]::WriteAllBytes($path, $data)
+        Log ("  {0} : patched ({1} change(s), {2} bytes; OEM kept as *.oem)" -f $rel, $files[$rel].Count, $data.Length)
         $done++
     }
-    Log "  patched $done file(s), $already already patched (OEM copies kept as *.oem)"
+    Log ("  summary: {0} patched, {1} already patched, {2} unpatched, {3} missing (OEM copies kept as *.oem)" -f $done, $already, $unpatched.Count, $missing.Count)
+    if ($unpatched.Count -gt 0) { Log ("  unpatched (different build): " + ($unpatched -join ", ")) }
+    if ($missing.Count   -gt 0) { Log ("  missing from payload: "        + ($missing   -join ", ")) }
+
+    # Loud stop if a file the game cannot start without could not be patched. This is almost
+    # always the wrong disc: the fixes are cut from the NASCAR v1.1 game disc (part 050-0136-01)
+    # and silently skip on any other revision (e.g. v1.5), leaving an install that looks fine but
+    # hangs at launch with no window. Fail here, with the reason, rather than there with none.
+    $criticalBad = @()
+    foreach ($c in $critical) { if (($unpatched -contains $c) -or ($missing -contains $c)) { $criticalBad += $c } }
+    if ($criticalBad.Count -gt 0) {
+        Warn "=============================================================="
+        Warn "This NASCAR game disc is NOT the supported version."
+        Warn "Required file(s) did not match the expected v1.1 bytes:"
+        foreach ($c in $criticalBad) { Warn "    $c" }
+        Warn "The fixes are made for the v1.1 game disc (part 050-0136-01, the"
+        Warn "one with data1.cab). Other versions - notably the v1.5 disc -"
+        Warn "install but will not start: the shell hangs with no window."
+        Warn "Get the v1.1 disc/ISO and reinstall. The README has a download link."
+        Warn "=============================================================="
+        Fail ("unsupported game disc: " + ($criticalBad -join ", ") + " did not match the supported v1.1 build (part 050-0136-01). Only v1.1 is compatible - see the README.")
+    }
 }
 
 # Two operator-menu pages ask the cabinet for its network card address and the operator's
@@ -852,24 +903,66 @@ function Install-Launcher($root, $game, $shell) {
 
 function Verify-Deployment($root, $game, $shell, $plus, $dbPath) {
     if ($DryRun) { Log "dry run: skipping verification"; return }
-    Log "--- verification ---"
-    $must = @(
-        (Join-Path $game "NASCAR_GVR.exe"), (Join-Path $game "GvrIO.dll"),
-        (Join-Path $game "msvcp71.dll"), (Join-Path $game "mss32.dll"),
-        (Join-Path $game "config\GvrIO.xml"), (Join-Path $game "GameData"),
-        (Join-Path $game "Audio"), (Join-Path $root "nascar_settings.ini")
-    )
-    if (!$SkipShell) { $must += (Join-Path $shell "bin\AMPlayer.exe"); $must += (Join-Path $shell "Shell.am") }
+    Log "--- verification (each required file, one by one) ---"
+
+    # Each check is @(path, required, note). required $true -> the install fails if it is absent;
+    # required $false -> a warning only (the game may still start, but note it in the log). Every
+    # file is logged either way, so a "won't start" support log shows exactly what is and isn't there.
+    $checks = New-Object System.Collections.ArrayList
+    function Need($p, $req, $note) { [void]$checks.Add(@($p, $req, $note)) }
+
+    Need (Join-Path $game "NASCAR_GVR.exe")        $true  "race engine"
+    Need (Join-Path $game "GvrIO.dll")             $true  "GvrIO shim (dongle gate + mode limit, loaded into the race)"
+    Need (Join-Path $game "msvcp71.dll")           $true  "MSVC 7.1 runtime"
+    Need (Join-Path $game "mss32.dll")             $true  "Miles audio"
+    Need (Join-Path $game "config\GvrIO.xml")      $true  "input map"
+    Need (Join-Path $game "GameData")              $true  "track / car data"
+    Need (Join-Path $game "Audio")                 $true  "audio banks"
+    Need (Join-Path $game "LOG")                   $false "crash/trace log folder (engine will not create it; no folder = no trace00N.txt)"
+    Need (Join-Path $root "nascar_settings.ini")   $true  "display / controller settings"
+    Need (Join-Path $root "nascar_registry.ini")   $false "private registry the shim reads"
+    Need (Join-Path $root "NascarLaunch.exe")      $false "launcher the shortcut runs"
+
+    if (!$SkipShell) {
+        Need (Join-Path $shell "bin\AMPlayer.exe")            $true  "Anark shell host"
+        Need (Join-Path $shell "Shell.am")                   $true  "shell start scene"
+        Need (Join-Path $shell "bin\GvrIO.dll")              $true  "GvrIO shim for the shell (private registry, startup deadlock)"
+        Need (Join-Path $shell "bin\Dongle.dll")             $true  "shell dongle self-test (must be the v1.1-patched build)"
+        Need (Join-Path $shell "bin\AMPlayer.exe.config")    $false "pins CLR 1.1 (PLUSDE access-violates on CLR 2.0 without it)"
+        Need (Join-Path $shell "bin\msvcp71d.dll")           $false "debug runtime (NASCARPlugIn silently fails to load without it)"
+        Need (Join-Path $shell "bin\msvcr71d.dll")           $false "debug runtime (NASCARPlugIn silently fails to load without it)"
+        Need (Join-Path $shell "bin\DongleStorageDevice.dll") $false "OEM storage device (car select needs the real one)"
+    }
     if (!$SkipSqlite) {
-        $must += $dbPath
-        $must += (Join-Path $plus "4\schema\NASCARcabinetXml.enc")
-        if (!$SkipShell) { $must += (Join-Path $shell "bin\PLUSDE.dll"); $must += (Join-Path $shell "bin\sqlite3.dll") }
+        Need $dbPath                                           $true "SQLite game database"
+        Need (Join-Path $plus "4\schema\NASCARcabinetXml.enc") $true "Plus connection blob"
+        if (!$SkipShell) {
+            Need (Join-Path $shell "bin\PLUSDE.dll")  $true "Plus provider (patched to SQLite)"
+            Need (Join-Path $shell "bin\sqlite3.dll") $true "SQLite engine"
+        }
     }
-    $missing = @($must | Where-Object { !(Test-Path $_) })
-    if ($missing.Count -gt 0) {
-        foreach ($m in $missing) { Warn "MISSING: $m" }
-        Fail "verification failed ($($missing.Count) missing path(s))"
+
+    $missing = 0; $absent = 0
+    foreach ($c in $checks) {
+        $p = $c[0]; $req = $c[1]; $note = $c[2]
+        $rel = $p; if ($p.StartsWith($root)) { $rel = $p.Substring($root.Length).TrimStart('\') }
+        if (Test-Path -LiteralPath $p) {
+            if (Test-Path -LiteralPath $p -PathType Leaf) {
+                $kb = [math]::Round((Get-Item -LiteralPath $p).Length / 1KB)
+                Log ("  [ok]      {0}  ({1:N0} KB)  - {2}" -f $rel, $kb, $note)
+            } else {
+                $n = @(Get-ChildItem -LiteralPath $p -ErrorAction SilentlyContinue).Count
+                Log ("  [ok]      {0}\  ({1} item(s))  - {2}" -f $rel, $n, $note)
+            }
+        } elseif ($req) {
+            Warn ("  [MISSING] {0}  - {1}  (REQUIRED)" -f $rel, $note); $missing++
+        } else {
+            Warn ("  [absent]  {0}  - {1}  (optional)" -f $rel, $note); $absent++
+        }
     }
+
+    if ($missing -gt 0) { Fail "verification failed: $missing required file(s) missing - see the [MISSING] line(s) above" }
+    if ($absent -gt 0) { Log "  ($absent optional item(s) absent - not fatal, noted above)" }
     $size = (Get-ChildItem -Recurse $root | Where-Object { !$_.PSIsContainer } | Measure-Object -Sum Length).Sum
     Log ("all required files present ({0:N0} MB installed)" -f ($size / 1MB))
 }
