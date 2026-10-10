@@ -52,7 +52,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-09-nascar-portable-4.7" # 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc (unpatchable Dongle.dll); verification logs every required file one by one
+$Version = "2026-10-10-nascar-portable-4.8" # 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }

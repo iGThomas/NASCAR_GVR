@@ -418,6 +418,41 @@ static BOOL CALLBACK borderless_cb(HWND h, LPARAM lp)
     return TRUE;
 }
 
+// --------------------------------------------------- keep the race above the shell
+//
+// In borderless mode both the race and the shell are ordinary (non-topmost) windows. The shell
+// keeps drawing its "Please Wait" overlay, and depending on timing and the GPU driver it can end
+// up on top of the race - which is running and playable, just invisible underneath. borderless_cb
+// raises the race exactly once (it returns early once the frame is gone), so nothing kept it in
+// front. Here we re-assert the order every poll tick: find the race window, then drop every
+// visible shell window to just behind it. SWP_NOACTIVATE means focus never changes, so this does
+// not fight alt-tab or steal input - it only reorders z. Skipped in exclusive fullscreen, where
+// Direct3D owns the front (this runs only when s.borderless, the windowed path).
+static HWND g_raceHwnd;
+static BOOL CALLBACK find_race_cb(HWND h, LPARAM)
+{
+    if (!IsWindowVisible(h) || GetWindow(h, GW_OWNER)) return TRUE;
+    RECT rc; GetClientRect(h, &rc);
+    if (rc.right < 320 || rc.bottom < 240) return TRUE;
+    DWORD pid = 0; GetWindowThreadProcessId(h, &pid);
+    if (pid_is_exe(pid, "NASCAR_GVR.exe")) { g_raceHwnd = h; return FALSE; }   // stop at the first
+    return TRUE;
+}
+static BOOL CALLBACK sink_shell_cb(HWND h, LPARAM lp)
+{
+    if (!IsWindowVisible(h) || GetWindow(h, GW_OWNER)) return TRUE;
+    DWORD pid = 0; GetWindowThreadProcessId(h, &pid);
+    if (!pid_is_exe(pid, "AMPlayer.exe")) return TRUE;
+    SetWindowPos(h, (HWND)lp, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE);  // shell just behind the race
+    return TRUE;
+}
+static void keep_race_above_shell(void)
+{
+    g_raceHwnd = NULL;
+    EnumWindows(find_race_cb, 0);
+    if (g_raceHwnd) EnumWindows(sink_shell_cb, (LPARAM)g_raceHwnd);   // no race window yet -> leave the shell alone
+}
+
 // ---------------------------------------------------------------- always-on-top
 //
 // The cabinet shell makes its window always-on-top (WS_EX_TOPMOST), which on a desktop
@@ -484,12 +519,12 @@ static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, 
     give_focus(pi.dwProcessId);
     DWORD code = 0;
     if (wait) {
-        // poll while the shell (or a direct race) runs: undo always-on-top, and make the
-        // race window borderless when asked to
+        // poll while the shell (or a direct race) runs: undo always-on-top, make the race window
+        // borderless when asked to, and keep it above the shell's "Please Wait" overlay
         TopmostCtx tc = { !s.fullscreen };
         while (WaitForSingleObject(pi.hProcess, 250) == WAIT_TIMEOUT) {
             EnumWindows(untopmost_cb, (LPARAM)&tc);
-            if (s.borderless) EnumWindows(borderless_cb, (LPARAM)&s);
+            if (s.borderless) { EnumWindows(borderless_cb, (LPARAM)&s); keep_race_above_shell(); }
             if (!foreground_is_game()) restore_taskbar();
         }
         GetExitCodeProcess(pi.hProcess, &code);
