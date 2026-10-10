@@ -5,6 +5,10 @@ game. You get the real arcade front end (attract screen → driver, transmission
 race → back to the menus) in one folder of your choice. Xbox and PlayStation controllers work.
 Your PC stays a normal PC: no shell replacement, no autostart, no reboot.
 
+<p align="center">
+  <a href="https://discord.gg/h7tBkSMbeB"><img src="https://img.shields.io/badge/Discord-join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the Discord community"></a>
+</p>
+
 ## Quick install
 
 **You need:**
@@ -127,6 +131,14 @@ workload): run `build.cmd` in each `src\` folder. To make a release download, ru
 `Tools\Make-Release.ps1 -Version <x.y>`: it packs only what the installer needs into
 `dist\NASCAR-GVR-<x.y>.zip`, which is then uploaded to a GitHub Release. `Tools\Make-BytePatches.py` regenerates
 `Patches\nascar-bytepatches.txt` from an original and a patched install.
+
+## Community & help
+
+Questions, bug reports, or want to show off your setup? **[Join the Discord](https://discord.gg/h7tBkSMbeB)** — https://discord.gg/h7tBkSMbeB
+
+If the game will not start, bring these and someone can usually spot it quickly:
+- `install.log` from `%TEMP%\NASCAR_GVR_Install\`
+- after setting `[Debug] Log=true` in `nascar_settings.ini` and launching once, the `LOG` folder from the install root
 
 ## Disclaimer
 
