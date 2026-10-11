@@ -38,6 +38,14 @@ Your PC stays a normal PC: no shell replacement, no autostart, no reboot.
 > quarantined (if `NascarLaunch.exe` vanished, unzip again and re-run `Install.bat`). This is a false alarm: to run an arcade game on a normal PC, our small DLLs step in
 > between the game and Windows, and antivirus programs flag that kind of behaviour by default.
 
+**Updating:** download the newest release, unzip it, run `Install.bat` and pick your existing
+install folder (e.g. `C:\Games\NASCAR_GVR`). It updates in place - no game disc needed, your settings
+are kept (new settings are added), and it works even if you skipped releases. The installer only
+ever touches a folder it installed itself (marked by `gvr-install.ini`); folders of other games,
+other GVR titles or other NASCAR editions are never changed.
+Your leaderboards, stats and operator settings (`GVR\GvrPlus\game.db`), your settings and your race
+saves are always kept, and copied to `Backup\` in the game folder before every install or update.
+
 Screen size, fullscreen and the controller map are in `nascar_settings.ini` in the install
 folder. Advanced: the installer still takes command-line options, e.g.
 `Install.bat -Width 1920 -Height 1080` from an Administrator window.
@@ -57,7 +65,7 @@ folder. Advanced: the installer still takes command-line options, e.g.
 | Gears (manual transmission) | `T` `Y` `U` `I` = gears 1–4 | X / Y = up / down | Square / Triangle = up / down | Y / X = up / down |
 | Music | `M` | D-pad right | D-pad right | D-pad right |
 | Quit the race | hold `V` `L` `S` `M` together | hold D-pad down | hold D-pad down | hold D-pad down |
-| Operator menu | `O` | Menu (in the menus) | Options (in the menus) | + (in the menus) |
+| Operator menu | `O` | Menu (in the menus) | Options (in the menus) | − (in the menus) |
 
 **Switch Pro Controller (new, not yet tested on real hardware):** USB or Bluetooth. Buttons follow the same
 *positions* as the other pads, so A and B are swapped compared with Switch games. ZL / ZR are on/off; for

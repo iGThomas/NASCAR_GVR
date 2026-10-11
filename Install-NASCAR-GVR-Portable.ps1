@@ -35,6 +35,7 @@ param(
     [switch]$SkipGvrTools,
     [switch]$SkipFonts,
     [switch]$SkipDotNet,
+    [switch]$RepairDotNet,   # remove .NET 1.1 and install it clean even if it seems to work
     [switch]$InstallDirectX,
     [switch]$Dxvk,
     [switch]$InstallHercules,
@@ -48,11 +49,12 @@ param(
     [switch]$Uninstall,
     [switch]$NoGui,
     [switch]$DryRun,
-    [switch]$ForceOverwrite
+    [switch]$ForceOverwrite,
+    [switch]$ResetData       # ALSO reset the player's data (leaderboards/stats db, settings, race saves) - backed up first
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-11-nascar-portable-4.10" # 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
+$Version = "2026-10-12-nascar-portable-4.13" # 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -130,6 +132,196 @@ function Test-WritableFolder($p) {
     } catch { return $false }
 }
 # a mounted ISO or inserted disc is found without asking: data1.cab + GVRSETUP.INI saying NASCAR
+# ---- install identity: which folder is OUR install (updates never touch anything else) --------
+# Every install carries gvr-install.ini (Product + Edition). The installer only updates a folder
+# that is provably this product and edition; a folder holding anything else - another GVR title,
+# another NASCAR game, the 2.0.2 "NASCAR Team Racing" edition, or just other files - is never
+# installed into, updated or removed. Installs from before the marker existed (<= 1.0.8) are
+# recognised by the exact v1.1 game exe (we never modify it on disk) PLUS our launcher or settings.
+$Product = "NASCAR_GVR"
+$Edition = "1.1"
+$MarkerName = "gvr-install.ini"
+$Exe11Sha256  = "4F61C7D63BD3C70AAB5FAEDFEE55C5587336E83F67ABC9A4C4637B2F66DDE482"   # v1.1 disc 050-0136-01
+$Exe202Sha256 = "316FD6E422CBDF746E41E73BD4D229342389CA8F1C9E5154D10916759E777355"   # 2.0.2.068 (Team Racing)
+
+function Get-FileSha256($p) {   # PowerShell 2.0 has no Get-FileHash
+    $fs = [IO.File]::OpenRead($p)
+    try { return ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($fs))).Replace("-", "") }
+    finally { $fs.Close() }
+}
+
+function Read-InstallMarker($root) {
+    $m = @{}
+    $p = Join-Path $root $MarkerName
+    if (!(Test-Path -LiteralPath $p)) { return $null }
+    foreach ($l in (Get-Content -LiteralPath $p)) {
+        if ($l -match '^\s*([A-Za-z]+)\s*=\s*(.*?)\s*$') { $m[$matches[1]] = $matches[2] }
+    }
+    return $m
+}
+
+# Returns one of:
+#   empty         the folder does not exist or is empty           -> fresh install
+#   ours          our marker, this product + edition              -> update in place (no disc)
+#   ours-legacy   no marker, but the v1.1 exe + our launcher/ini  -> update in place, marker added
+#   ours-partial  only our own files, no game yet (a stopped install) -> fresh install
+#   other:<what>  another product / edition / a foreign NASCAR_GVR.exe -> never touched
+#   foreign       anything else that is not empty                 -> never touched
+function Get-InstallKind($root) {
+    if (!(Test-Path -LiteralPath $root)) { return "empty" }
+    if (!(Test-Path -LiteralPath $root -PathType Container)) { return "foreign" }
+    $items = @(Get-ChildItem -LiteralPath $root -Force -ErrorAction SilentlyContinue)
+    if ($items.Count -eq 0) { return "empty" }
+    $m = Read-InstallMarker $root
+    if ($m) {
+        if ($m["Product"] -eq $Product -and $m["Edition"] -eq $Edition) { return "ours" }
+        return ("other:" + $m["Product"] + " " + $m["Edition"])
+    }
+    $ourFile = (Test-Path -LiteralPath (Join-Path $root "NascarLaunch.exe")) -or
+               (Test-Path -LiteralPath (Join-Path $root "nascar_settings.ini"))
+    $exe = Join-Path $root "Game\NASCAR_GVR.exe"
+    if (Test-Path -LiteralPath $exe) {
+        $h = Get-FileSha256 $exe
+        if ($h -eq $Exe11Sha256 -and $ourFile) { return "ours-legacy" }
+        if ($h -eq $Exe202Sha256) { return "other:NASCAR Team Racing 2.0.2" }
+        if ($h -eq $Exe11Sha256) { return "other:a NASCAR GVR 1.1 copy that this installer did not make" }
+        return "other:a different NASCAR_GVR.exe"
+    }
+    # a stopped earlier install: nothing but our own top-level names
+    $ours = @("Game", "Shell", "GVR", "LOG", "Fonts", "NascarLaunch.exe", "nascar_settings.ini",
+              "nascar_registry.ini", "NASCAR_GVR.ico", $MarkerName)
+    $strangers = @($items | Where-Object { $ours -notcontains $_.Name })
+    if ($ourFile -and $strangers.Count -eq 0) { return "ours-partial" }
+    return "foreign"
+}
+
+function Test-OurKind($kind) { return @("empty", "ours", "ours-legacy", "ours-partial") -contains $kind }
+
+function Get-KindText($kind) {
+    if ($kind -like "other:*") { return $kind.Substring(6) }
+    return "other files (not a NASCAR GVR 1.1 install)"
+}
+
+function Write-InstallMarker($root) {
+    if ($DryRun) { Log "would write $MarkerName (Product=$Product, Edition=$Edition)"; return }
+    $old = Read-InstallMarker $root
+    $first = if ($old -and $old["FirstInstalled"]) { $old["FirstInstalled"] } else { (Get-Date).ToString("yyyy-MM-dd HH:mm") }
+    $nl = [Environment]::NewLine
+    $text = "; NASCAR GVR install identity - lets the installer update THIS folder (and only this one)." + $nl +
+            "; Written by Install-NASCAR-GVR-Portable.ps1. Do not edit or copy it into another folder." + $nl +
+            "[Install]" + $nl +
+            "Product=$Product" + $nl + "Edition=$Edition" + $nl +
+            "Installer=$Version" + $nl +
+            "FirstInstalled=$first" + $nl +
+            "Updated=" + (Get-Date).ToString("yyyy-MM-dd HH:mm") + $nl
+    [IO.File]::WriteAllText((Join-Path $root $MarkerName), $text)
+    Log "install identity written: $MarkerName (Product=$Product, Edition=$Edition, Installer=$Version)"
+}
+
+# A shortcut we may replace or delete: missing, or pointing into this install (or at nothing).
+function Test-OurShortcut($lnk, $root) {
+    if (!(Test-Path -LiteralPath $lnk)) { return $true }
+    try {
+        $t = (New-Object -ComObject WScript.Shell).CreateShortcut($lnk).TargetPath
+        if (!$t -or !(Test-Path -LiteralPath $t)) { return $true }
+        return $t.StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
+    } catch { return $false }
+}
+
+# Settings merge on update: add every section / setting the new template has and the player's
+# nascar_settings.ini lacks (with the comment lines just above it), and never change a value the
+# player has. Unknown keys of theirs are left alone. PowerShell 2.0 compatible.
+function Merge-Settings($dst, $tpl) {
+    if (!(Test-Path -LiteralPath $tpl) -or !(Test-Path -LiteralPath $dst)) { return }
+    $user = New-Object System.Collections.ArrayList
+    foreach ($l in [IO.File]::ReadAllLines($dst)) { [void]$user.Add($l) }
+    $secs = @{}; $cur = ""; $secs[""] = @{ keys = @{}; last = -1 }
+    $have = @{}                                       # every line the player's file has (trimmed)
+    foreach ($l in $user) { $have[([string]$l).Trim()] = 1 }
+    for ($i = 0; $i -lt $user.Count; $i++) {
+        $l = ([string]$user[$i]).Trim()
+        if ($l -match '^\[(.+)\]$') { $cur = $matches[1].Trim().ToLower(); $secs[$cur] = @{ keys = @{}; last = $i }; continue }
+        if ($l -and !$l.StartsWith(";") -and !$l.StartsWith("#") -and $l.Contains("=")) {
+            $secs[$cur].keys[$l.Split("=")[0].Trim().ToLower()] = 1
+        }
+        if ($l) { $secs[$cur].last = $i }
+    }
+    $atIndex = @{}                                    # user line index -> lines to insert after it
+    $append = New-Object System.Collections.ArrayList # whole new sections
+    $added = 0; $tsec = ""; $newSec = $false; $pending = @()
+    foreach ($raw in [IO.File]::ReadAllLines($tpl)) {
+        $l = $raw.Trim()
+        if ($l -match '^\[(.+)\]$') {
+            $tsec = $matches[1].Trim().ToLower(); $pending = @()
+            $newSec = !$secs.ContainsKey($tsec)
+            if ($newSec) { [void]$append.Add(""); [void]$append.Add($raw) }
+            continue
+        }
+        if ($newSec) { [void]$append.Add($raw); if ($l -and !$l.StartsWith(";") -and $l.Contains("=")) { $added++ }; continue }
+        if (!$l) { $pending = @(); continue }
+        if ($l.StartsWith(";") -or $l.StartsWith("#")) { $pending += $raw; continue }
+        if (!$l.Contains("=") -or !$secs.ContainsKey($tsec)) { $pending = @(); continue }
+        $k = $l.Split("=")[0].Trim().ToLower()
+        if (!$secs[$tsec].keys.ContainsKey($k)) {
+            $at = $secs[$tsec].last
+            if (!$atIndex.ContainsKey($at)) { $atIndex[$at] = New-Object System.Collections.ArrayList }
+            # the comment lines just above the new key - unless the player's file has them already
+            foreach ($p in $pending) { if (!$have.ContainsKey($p.Trim())) { [void]$atIndex[$at].Add($p); $have[$p.Trim()] = 1 } }
+            [void]$atIndex[$at].Add($raw)
+            $secs[$tsec].keys[$k] = 1
+            $added++
+        }
+        $pending = @()
+    }
+    if ($added -eq 0) { Log "  settings: nothing new to add"; return }
+    if ($DryRun) { Log "  would add $added new setting(s) to nascar_settings.ini (your values unchanged)"; return }
+    foreach ($at in ($atIndex.Keys | Sort-Object -Descending)) { $user.InsertRange($at + 1, $atIndex[$at]) }
+    if ($append.Count) { $user.AddRange($append) }
+    [IO.File]::WriteAllLines($dst, [string[]]$user.ToArray())
+    Log "  settings: added $added new setting(s) to nascar_settings.ini (your values unchanged)"
+}
+
+# ---- the player's data: never lost by an install, update or repair ---------------------------
+# Leaderboards, player/driver/track stats, players and the operator's settings live in
+# GVR\GvrPlus\game.db; the player's settings in nascar_settings.ini; the game's own state in
+# nascar_registry.ini; the race's profile/controls/garage in Game\Save. An update never replaces
+# them; a -ForceOverwrite reinstall keeps them too (only -ResetData resets them). Before every
+# install/update they are copied to <install>\Backup\<time> (newest 5 kept), and uninstall copies
+# them to Documents\NASCAR_GVR Backup before the folder is removed.
+$PlayerDataItems = @("GVR\GvrPlus\game.db", "nascar_settings.ini", "nascar_registry.ini", "Game\Save")
+function Backup-PlayerData($root, $dest) {
+    $have = @($PlayerDataItems | Where-Object { Test-Path -LiteralPath (Join-Path $root $_) })
+    if ($have.Count -eq 0) { return $null }
+    if ($DryRun) { Log "would back up the player's data ($($have -join ', ')) to $dest"; return $null }
+    foreach ($i in $have) {
+        $to = Join-Path $dest $i
+        New-Item -ItemType Directory -Force (Split-Path -Parent $to) | Out-Null
+        Copy-Item -LiteralPath (Join-Path $root $i) -Destination $to -Recurse -Force
+    }
+    Log "player data backed up ($($have -join ', ')) -> $dest"
+    return $dest
+}
+function Remove-OldBackups($root) {
+    $dir = Join-Path $root "Backup"
+    $old = @(Get-ChildItem -LiteralPath $dir -ErrorAction SilentlyContinue | Where-Object { $_.PSIsContainer } |
+             Sort-Object Name -Descending | Select-Object -Skip 5)
+    foreach ($o in $old) { Remove-Item -LiteralPath $o.FullName -Recurse -Force -ErrorAction SilentlyContinue }
+}
+function Restore-RaceSaves($backup, $game) {
+    $src = Join-Path $backup "Game\Save"
+    if (!$backup -or !(Test-Path -LiteralPath $src)) { return }
+    # file by file: Copy-Item of a folder INTO an existing folder of the same name nests it
+    # (Save\GvrSinglePlayer\GvrSinglePlayer\...) instead of replacing the files
+    $dst = Join-Path $game "Save"; $n = 0
+    foreach ($f in @(Get-ChildItem -LiteralPath $src -Recurse -Force | Where-Object { !$_.PSIsContainer })) {
+        $to = Join-Path $dst $f.FullName.Substring($src.Length).TrimStart('\')
+        New-Item -ItemType Directory -Force (Split-Path -Parent $to) | Out-Null
+        Copy-Item -LiteralPath $f.FullName -Destination $to -Force
+        $n++
+    }
+    Log "  the player's race saves restored over the disc defaults ($n file(s) in Game\Save)"
+}
+
 function Find-NascarDisc {
     foreach ($d in @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue)) {
         $r = $d.Root
@@ -194,6 +386,17 @@ function Resolve-Unshield {
     Fail "unshield.exe not found. Build it with Build-Unshield.ps1 or pass -UnshieldPath."
 }
 
+# The parts of the unpacked disc the install copies. An extraction can be left half-done in %TEMP%
+# by an interrupted install; checking only for NASCAR_GVR.exe let the next run reuse it and miss
+# the database files (2026-10-12: "GvrPlus payload source missing" -> NASCARcabinetXml.enc missing).
+$PayloadParts = @("NASCAR\Game\NASCAR_GVR.exe", "NASCAR\Shell\bin\AMPlayer.exe",
+                  "GVRPLUS\4\schema\NASCARcabinetXml.enc", "WINDOWS\system32")
+function Get-MissingPayloadParts {
+    $m = @()
+    foreach ($part in $PayloadParts) { if (!(Test-Path -LiteralPath (Join-Path $PayloadRoot $part))) { $m += $part } }
+    return $m
+}
+
 function Extract-Payload {
     Assert-File (Join-Path $DiscRoot "data1.cab") "data1.cab (game disc)"
     $ex = Resolve-Unshield
@@ -210,6 +413,8 @@ function Extract-Payload {
     $fix = Join-Path $SourceRoot "Tools\Fix-GvrDirNames.ps1"
     if (Test-Path $fix) { & $fix -Root (Join-Path $PayloadRoot "NASCAR") | Out-Null }
     if (!(Test-Path -LiteralPath (Join-Path $PayloadRoot "NASCAR\Game\Options\Basic Settings"))) { Fail "could not restore the directory names after extraction" }
+    $miss = @(Get-MissingPayloadParts)
+    if ($miss.Count) { Fail ("The game disc was not unpacked completely - missing: " + ($miss -join ", ") + ". Make sure the disc/ISO is the v1.1 game disc and readable, then run Install.bat again.") }
 }
 
 # ===================== install steps ======================================
@@ -360,6 +565,8 @@ function Install-GvrIoShim($game, $shell) {
 # copy, so re-running the installer repairs or adds them to an existing install -
 # the same reason the NFSU portable installer stages its DLLs unconditionally.
 function Install-SupportDlls($game, $shell) {
+    # They come from the game disc and are already in place from the first install.
+    if ($UpdateMode) { Log "--- support DLLs: already in place (update - no disc) ---"; return }
     Log "--- support DLLs (app-local, never system32) ---"
     $binSrc = Join-Path $PayloadRoot "NASCAR\Shell\bin"
     $sysSrc = Join-Path $PayloadRoot "WINDOWS\system32"
@@ -445,7 +652,10 @@ function Install-Sqlite($game, $shell, $plus, $dbPath) {
         }
     }
 
-    Copy-Contents (Join-Path $PayloadRoot "GVRPLUS") $plus "GvrPlus payload"
+    if (!$UpdateMode) {   # from the disc; in place already on update
+        if (!$DryRun -and !(Test-Path -LiteralPath (Join-Path $PayloadRoot "GVRPLUS"))) { Fail "The game disc's GVRPLUS folder (database files) was not unpacked - run Install.bat again with the v1.1 disc mounted." }
+        Copy-Contents (Join-Path $PayloadRoot "GVRPLUS") $plus "GvrPlus payload"
+    }
 
     # Prefer compiling the provider on THIS machine with its own .NET 1.1 compiler -
     # a locally built assembly can never be a version mismatch for the local runtime.
@@ -480,8 +690,8 @@ function Install-Sqlite($game, $shell, $plus, $dbPath) {
 
     # The database holds leaderboards and operator settings - never clobbered.
     New-Dir (Split-Path -Parent $dbPath)
-    if ((Test-Path $dbPath) -and !$ForceOverwrite) {
-        Warn "existing database kept: $dbPath (use -ForceOverwrite to reset it)"
+    if ((Test-Path $dbPath) -and !$ResetData) {   # leaderboards, stats, operator settings - never reset by a reinstall
+        Log "  existing database kept (leaderboards, stats, operator settings): $dbPath  (-ResetData resets it)"
     }
     else { Copy-FileIfPresent (Join-Path $deploy "game.db") $dbPath "game.db" }
 
@@ -711,31 +921,125 @@ function Invoke-QuietClrCrashes([scriptblock]$Body) {
     }
 }
 
+# ---- .NET Framework 1.1: present AND working, or reinstalled clean ----------------------------
+# A damaged 1.1 install makes the shell hang inside CLR startup with no window (2026-10-12: a
+# player's 1.1, left half-done by the regsvcs.exe crash dialog, was fixed by uninstall + clean
+# reinstall). So an existing 1.1 is not trusted by its files alone: a tiny 1.1 program doing what
+# the shell's .NET does first (culture + number/currency/date formatting, System.Data) must run and
+# exit within 30 s. If not, 1.1 is removed and installed clean. Everything this stage unpacks goes
+# into FRESH folders - nothing left in %TEMP% by an earlier, interrupted run is ever reused.
+$NetFx11ProductCode = "{CB2F7EDD-9D1F-43C1-90FC-4F52EAE172A1}"   # netfx.msi, every language edition
+$NetFx11Dir = Join-Path $env:WINDIR "Microsoft.NET\Framework\v1.1.4322"
+
+function Reset-Dir($p) {
+    if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
+    if (Test-Path -LiteralPath $p) { Fail "Could not clear the temporary folder $p - close any window using it and run Install.bat again." }
+    New-Item -ItemType Directory -Force $p | Out-Null
+}
+
+# $null when .NET 1.1 works, else the reason.
+function Test-DotNet11Works {
+    foreach ($f in "mscorlib.dll", "mscorwks.dll", "System.dll", "System.Data.dll", "csc.exe") {
+        if (!(Test-Path -LiteralPath (Join-Path $NetFx11Dir $f))) { return "$f is missing" }
+    }
+    if (!(Test-Path (Join-Path $env:WINDIR "assembly\GAC\System\1.0.5000.0__b77a5c561934e089\System.dll"))) {
+        return "the 1.1 System assembly is missing from the global assembly cache"
+    }
+    $t = Join-Path $LogDir "dotnet11_test"
+    Reset-Dir $t
+    $src = @'
+using System; using System.Globalization;
+class P {
+    static int Main() {
+        CultureInfo c = CultureInfo.CurrentCulture;
+        string s = (1234567.891).ToString("N", c) + " | " + (12.5m).ToString("C", c) + " | " + DateTime.Now.ToString(c);
+        System.Data.DataSet d = new System.Data.DataSet("t"); d.Tables.Add("x");
+        Console.WriteLine(Environment.Version + " " + c.Name + " " + s);
+        return 42;
+    }
+}
+'@
+    [IO.File]::WriteAllText((Join-Path $t "P.cs"), $src)
+    [IO.File]::WriteAllText((Join-Path $t "P.exe.config"),
+        '<?xml version="1.0"?><configuration><startup><requiredRuntime version="v1.1.4322" safemode="true"/><supportedRuntime version="v1.1.4322"/></startup></configuration>')
+    $csc = Join-Path $NetFx11Dir "csc.exe"
+    $p = Start-Process $csc -ArgumentList "/nologo /out:`"$t\P.exe`" /r:System.Data.dll `"$t\P.cs`"" -WorkingDirectory $t -WindowStyle Hidden -Wait -PassThru `
+                        -RedirectStandardOutput (Join-Path $t "csc.txt")
+    if ($p.ExitCode -ne 0 -or !(Test-Path (Join-Path $t "P.exe"))) { return "its C# compiler failed (exit $($p.ExitCode))" }
+    $out = Join-Path $t "out.txt"
+    $why = Invoke-QuietClrCrashes {
+        $q = Start-Process (Join-Path $t "P.exe") -WorkingDirectory $t -WindowStyle Hidden -PassThru -RedirectStandardOutput $out
+        $null = $q.Handle   # keep the handle: without it ExitCode is empty after WaitForExit(timeout)
+        if (!$q.WaitForExit(30000)) {
+            try { $q.Kill() } catch { }
+            "a .NET 1.1 test program hung (no exit within 30 s) - the same hang the shell shows"
+        }
+        elseif ($q.ExitCode -ne 42) { "a .NET 1.1 test program crashed (exit $($q.ExitCode))" }
+    }
+    if ($why) { return $why }
+    $line = if (Test-Path $out) { (Get-Content $out | Select-Object -First 1) } else { "" }
+    if ($line -notlike "1.1.4322*") { return "the test program did not run on .NET 1.1 (it reported '$line')" }
+    Log "  .NET 1.1 test: $line"
+    return $null
+}
+
+function Remove-DotNet11 {
+    Log "  removing the existing .NET 1.1 ($NetFx11ProductCode)"
+    $code = Invoke-QuietClrCrashes { (Start-Process msiexec -ArgumentList "/x $NetFx11ProductCode /qn /norestart" -Wait -PassThru).ExitCode }
+    if ($code -eq 1605) { Log "  (it was not registered with Windows Installer - installing over it)" }
+    elseif ($code -ne 0 -and $code -ne 3010) { Warn "  .NET 1.1 removal returned $code - installing over it anyway" }
+    else { Log "  removed" }
+}
+
+function Install-DotNet11($dfx, $sp1) {
+    Log "installing .NET 1.1 + SP1 (slipstreamed - required on Windows 10/11)"
+    $w = Join-Path $LogDir "dotnet11"; $adm = Join-Path $LogDir "dotnet11_admin"
+    Reset-Dir $w; Reset-Dir $adm                      # never an image left by an earlier run
+    $p = Start-Process $dfx -ArgumentList "/q /c /t:`"$w`"" -Wait -PassThru
+    if (!(Test-Path (Join-Path $w "netfx.msi"))) { Fail "dotnetfx.exe extraction failed ($($p.ExitCode))" }
+    $p = Start-Process $sp1 -ArgumentList "/Xp:`"$w\netfxsp.msp`"" -Wait -PassThru
+    if (!(Test-Path (Join-Path $w "netfxsp.msp"))) { Fail ".NET 1.1 SP1 extraction failed ($($p.ExitCode))" }
+    $p = Start-Process msiexec -ArgumentList "/a `"$w\netfx.msi`" TARGETDIR=`"$adm`" /qn" -Wait -PassThru
+    if (!(Test-Path (Join-Path $adm "netfx.msi"))) { Fail ".NET 1.1 admin image creation failed ($($p.ExitCode))" }
+    $p = Start-Process msiexec -ArgumentList "/a `"$adm\netfx.msi`" /p `"$w\netfxsp.msp`" /qn" -Wait -PassThru
+    if ($p.ExitCode -ne 0) { Fail ".NET 1.1 SP1 slipstream failed ($($p.ExitCode))" }
+    $code = Invoke-QuietClrCrashes { (Start-Process msiexec -ArgumentList "/i `"$adm\netfx.msi`" /qn /norestart" -Wait -PassThru).ExitCode }
+    if ($code -ne 0 -and $code -ne 3010) { Fail ".NET 1.1 SP1 install failed ($code)" }
+    Remove-Item -LiteralPath $w, $adm -Recurse -Force -ErrorAction SilentlyContinue
+    Log "  .NET 1.1 SP1 installed"
+}
+
 function Ensure-DotNet {
     if ($SkipDotNet -or $SkipShell) { return }
-    if (Test-Path (Join-Path $env:WINDIR "Microsoft.NET\Framework\v1.1.4322\mscorlib.dll")) { Log ".NET 1.1 present"; return }
+    $present = Test-Path -LiteralPath (Join-Path $NetFx11Dir "mscorlib.dll")
+    if ($present -and !$RepairDotNet) {
+        if ($DryRun) { Log ".NET 1.1 present (dry run: not tested)"; return }
+        $why = Test-DotNet11Works
+        if (!$why) { Log ".NET 1.1 present and working"; return }
+        Warn ".NET 1.1 is installed but does not work ($why) - reinstalling it clean"
+    }
+    elseif ($present) { Log ".NET 1.1: clean reinstall requested (-RepairDotNet)" }
+
     $dep = Resolve-Dependencies
     $dfx = if ($dep) { Join-Path $dep "DotNet11\dotnetfx.exe" } else { $null }
     $sp1 = if ($dep) { Join-Path $dep "DotNet11\NDP1.1sp1-KB867460-X86.exe" } else { $null }
     if (!$dfx -or !(Test-Path $dfx)) {
+        if ($present) { Fail ".NET 1.1 does not work and its installer (Dependencies\DotNet11\dotnetfx.exe) is not in this folder - unzip the release again." }
         Warn ".NET 1.1 is missing and the redist is not bundled. The game itself does not need it,"
         Warn "but the Anark shell + PLUSDE (the database layer) do. Install it, or use -SkipShell."
         return
     }
-    if ($DryRun) { Log "would install .NET 1.1 SP1 (slipstreamed)"; return }
     if (!(Test-Path $sp1)) { Fail "NDP1.1sp1-KB867460-X86.exe is required on Windows 10/11 (plain redist = MSI 1603)" }
+    if ($DryRun) { Log $(if ($present) { "would remove and reinstall .NET 1.1 SP1" } else { "would install .NET 1.1 SP1 (slipstreamed)" }); return }
 
-    Log "installing .NET 1.1 + SP1 (slipstreamed - required on Windows 10/11)"
-    $w = Join-Path $LogDir "dotnet11"; $adm = Join-Path $LogDir "dotnet11_admin"
-    New-Dir $w
-    Start-Process $dfx -ArgumentList "/q /c /t:`"$w`"" -Wait | Out-Null
-    if (!(Test-Path (Join-Path $w "netfx.msi"))) { Fail "dotnetfx.exe extraction failed" }
-    Start-Process $sp1 -ArgumentList "/Xp:`"$w\netfxsp.msp`"" -Wait | Out-Null
-    Start-Process msiexec -ArgumentList "/a `"$w\netfx.msi`" TARGETDIR=`"$adm`" /qn" -Wait | Out-Null
-    Start-Process msiexec -ArgumentList "/a `"$adm\netfx.msi`" /p `"$w\netfxsp.msp`" /qn" -Wait | Out-Null
-    $code = Invoke-QuietClrCrashes { (Start-Process msiexec -ArgumentList "/i `"$adm\netfx.msi`" /qn /norestart" -Wait -PassThru).ExitCode }
-    if ($code -ne 0 -and $code -ne 3010) { Fail ".NET 1.1 SP1 install failed ($code)" }
-    Log "  .NET 1.1 SP1 installed"
+    if ($present) { Remove-DotNet11 }
+    Install-DotNet11 $dfx $sp1
+    $why = Test-DotNet11Works
+    if ($why) {
+        Fail (".NET 1.1 still does not work after a clean reinstall ($why). If an antivirus is active, add the install folder " +
+              "and %TEMP%\NASCAR_GVR_Install as exclusions and run Install.bat again; otherwise send us %TEMP%\NASCAR_GVR_Install\install.log.")
+    }
+    Log "  .NET 1.1 works"
 }
 
 # NASCAR_GVR.exe imports d3d9 directly and no d3dx9 helper, so the June-2010 redist
@@ -884,7 +1188,7 @@ function Install-Launcher($root, $game, $shell) {
 
     # The settings file is the player's; never overwrite an edited one.
     $iniDst = Join-Path $root "nascar_settings.ini"
-    if ((Test-Path $iniDst) -and !$ForceOverwrite) { Log "  keeping your existing nascar_settings.ini" }
+    if ((Test-Path $iniDst) -and !$ResetData) { Log "  keeping your existing nascar_settings.ini"; Merge-Settings $iniDst $iniSrc }
     else {
         Copy-FileIfPresent $iniSrc $iniDst "nascar_settings.ini"
         # seed it with the values chosen on the command line
@@ -908,7 +1212,14 @@ function Install-Launcher($root, $game, $shell) {
     if (!$NoShortcut -and !$DryRun) {
         $target = Join-Path $root "NascarLaunch.exe"
         $useLauncher = Test-Path $target
-        $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "NASCAR Team Racing.lnk"
+        # never take over a shortcut that starts ANOTHER install (another copy, a future edition)
+        $lnkName = "NASCAR Team Racing"
+        $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "$lnkName.lnk"
+        if (!(Test-OurShortcut $lnk $root)) {
+            $lnkName = "NASCAR Team Racing (" + (Split-Path -Leaf $root) + ")"
+            $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "$lnkName.lnk"
+            Log "  a 'NASCAR Team Racing' shortcut already starts another install - this one is '$lnkName'"
+        }
         $ws = New-Object -ComObject WScript.Shell
         $s = $ws.CreateShortcut($lnk)
         if ($useLauncher) {
@@ -926,7 +1237,8 @@ function Install-Launcher($root, $game, $shell) {
         Log "  desktop shortcut -> $($s.TargetPath)"
 
         # Start menu entry as well, so it behaves like a normal installed game.
-        $sm = Join-Path ([Environment]::GetFolderPath("Programs")) "NASCAR Team Racing.lnk"
+        $sm = Join-Path ([Environment]::GetFolderPath("Programs")) "$lnkName.lnk"
+        if (!(Test-OurShortcut $sm $root)) { Log "  start menu: '$lnkName' starts another install - left alone"; return }
         $s2 = $ws.CreateShortcut($sm)
         $s2.TargetPath = $s.TargetPath
         $s2.Arguments = $s.Arguments
@@ -1000,7 +1312,7 @@ function Verify-Deployment($root, $game, $shell, $plus, $dbPath) {
         }
     }
 
-    if ($missing -gt 0) { Fail "verification failed: $missing required file(s) missing after the install - see the [MISSING] lines in the log. If they were there a moment ago, your antivirus removed them: restore them (Windows Security > Protection history), add the install folder as an exclusion and run Install.bat again." }
+    if ($missing -gt 0) { Fail "verification failed: $missing required file(s) missing after the install - see the [MISSING] lines in the log. Run Install.bat again with the game disc mounted. If it happens again and an antivirus is active, it may be removing them: check Windows Security > Protection history and add the install folder as an exclusion." }
     if ($absent -gt 0) { Log "  ($absent optional item(s) absent - not fatal, noted above)" }
     $size = (Get-ChildItem -Recurse $root | Where-Object { !$_.PSIsContainer } | Measure-Object -Sum Length).Sum
     Log ("all required files present ({0:N0} MB installed)" -f ($size / 1MB))
@@ -1008,10 +1320,16 @@ function Verify-Deployment($root, $game, $shell, $plus, $dbPath) {
 
 function Invoke-Uninstall($root) {
     Log "=== UNINSTALL ==="
+    $kind = Get-InstallKind $root
+    if (!(Test-OurKind $kind)) { Fail ("Not removing $root - it holds " + (Get-KindText $kind) + ". Nothing was removed.") }
     if (Test-Path $root) {
         if (!$ForceOverwrite) { Warn "would remove $root  (re-run with -ForceOverwrite to delete)" }
         elseif ($DryRun) { Log "would remove $root" }
-        else { Remove-Item -LiteralPath $root -Recurse -Force; Log "  removed $root" }
+        else {
+            $keep = Join-Path ([Environment]::GetFolderPath("MyDocuments")) ("NASCAR_GVR Backup\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+            [void](Backup-PlayerData $root $keep)
+            Remove-Item -LiteralPath $root -Recurse -Force; Log "  removed $root"
+        }
     }
     if ($ForceOverwrite) {
         Remove-Reg "GlobalVR\NASCAR"
@@ -1022,8 +1340,12 @@ function Invoke-Uninstall($root) {
         }
     }
     else { Warn "would remove HKLM\SOFTWARE\GlobalVR\NASCAR + gvr\Plus\2.0\Cabinet and GVRSQLITE_DB_NAS1" }
-    $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "NASCAR Team Racing.lnk"
-    if ((Test-Path $lnk) -and !$DryRun) { Remove-Item $lnk -Force; Log "  removed shortcut" }
+    foreach ($dir in @([Environment]::GetFolderPath("Desktop"), [Environment]::GetFolderPath("Programs"))) {
+        foreach ($l in @(Get-ChildItem -LiteralPath $dir -Filter "NASCAR Team Racing*.lnk" -ErrorAction SilentlyContinue)) {
+            # only shortcuts that start THIS install
+            if ((Test-OurShortcut $l.FullName $root) -and !$DryRun) { Remove-Item -LiteralPath $l.FullName -Force; Log "  removed shortcut $($l.Name)" }
+        }
+    }
     Log "uninstall pass complete"
 }
 
@@ -1050,7 +1372,7 @@ $ReleaseFiles = @(
     "Install.bat", "Install-NASCAR-GVR-Portable.ps1",
     "Patches\nascar-bytepatches.txt",
     "Deploy\PLUSDE.dll", "Deploy\GvrSqlite.dll", "Deploy\sqlite3.dll", "Deploy\game.db",
-    "Tools\unshield.exe", "Tools\Fix-GvrDirNames.ps1",
+    "Tools\unshield.exe", "Tools\Fix-GvrDirNames.ps1", "Tools\Check-DotNet11.ps1",
     "src\GvrIOShim\build\GvrIO.dll",
     "src\NascarLaunch\build\NascarLaunch.exe", "src\NascarLaunch\nascar_settings.ini", "src\NascarLaunch\NASCAR_GVR.ico",
     "src\GvrSqlite\GvrSqlite.cs",
@@ -1088,9 +1410,16 @@ if ([string]::IsNullOrEmpty($InstallRoot) -and (Test-CanShowDialogs)) {
         if (!$pick) { Log "cancelled - nothing was installed"; exit 0 }
         $pick = $pick.TrimEnd("\")
         if ($pick -match '^[A-Za-z]:$') { $InstallRoot = "$pick\NASCAR_GVR" }
-        # an existing install folder (any NASCAR* name, or one holding the game) is used as it is
-        elseif ((Split-Path -Leaf $pick) -match '(?i)^NASCAR' -or (Test-Path (Join-Path $pick "Game\NASCAR_GVR.exe"))) { $InstallRoot = $pick }
+        # an existing install of OURS is used as it is (to update it); any other folder - another
+        # NASCAR game, another GVR title, the 2.0.2 edition - gets a NASCAR_GVR folder inside it
+        elseif (@("ours", "ours-legacy", "ours-partial") -contains (Get-InstallKind $pick)) { $InstallRoot = $pick }
         else { $InstallRoot = Join-Path $pick "NASCAR_GVR" }
+        $k = Get-InstallKind $InstallRoot
+        if (!(Test-OurKind $k)) {
+            Show-Message ("This folder already holds " + (Get-KindText $k) + ":`r`n$InstallRoot`r`n`r`nNothing in it is touched. Pick another folder, for example C:\Games.") "Warning"
+            $InstallRoot = $null
+            continue
+        }
         if ($DryRun -or (Test-WritableFolder $InstallRoot)) { break }
         Show-Message "Cannot write to:`r`n$InstallRoot`r`n`r`nThat is probably the game disc or a read-only drive. Pick a folder on your hard drive, for example C:\Games." "Warning"
     }
@@ -1126,15 +1455,31 @@ Log "  plus + db  : $Plus"
 if ($Uninstall) { Invoke-Uninstall $InstallRoot; exit 0 }
 
 
-$already = Test-Path (Join-Path $Game "NASCAR_GVR.exe")
-if ($already -and !$ForceOverwrite) {
-    Log "game already present - refreshing registry/launchers/SQLite, skipping the big copy"
+# Only ever install into / update a folder that is empty or provably ours (see Get-InstallKind).
+$Kind = Get-InstallKind $InstallRoot
+if (!(Test-OurKind $Kind)) {
+    Fail ("Not installing into $InstallRoot - it already holds " + (Get-KindText $Kind) + ". Nothing in it was touched. Choose an empty folder or C:\Games\NASCAR_GVR.")
 }
-elseif ((Test-Path $Game) -and !$ForceOverwrite -and !$DryRun) {
-    Fail "$Game exists but looks incomplete. Use -ForceOverwrite to redo, or pick another folder."
+# Update mode: an existing install of ours is refreshed from this release alone - no game disc, the
+# player's settings kept (new ones added). Every stage brings the install to THIS release's state,
+# so a player who skipped releases ends up the same as one who took them all. -ForceOverwrite =
+# full reinstall from the disc instead.
+$UpdateMode = (@("ours", "ours-legacy") -contains $Kind) -and !$ForceOverwrite
+$already = $UpdateMode
+if ($UpdateMode) {
+    $prev = Read-InstallMarker $InstallRoot
+    $from = if ($prev -and $prev["Installer"]) { $prev["Installer"] } else { "a release before 1.0.9" }
+    Log "UPDATING the existing install in $InstallRoot (from $from) - no game disc needed"
 }
+else { Log ("install kind: $Kind" + $(if ($ForceOverwrite) { " (-ForceOverwrite: full reinstall)" } else { "" })) }
+$PlayerBackup = $null
+if ($Kind -ne "empty") {
+    $PlayerBackup = Backup-PlayerData $InstallRoot (Join-Path $InstallRoot ("Backup\" + (Get-Date -Format "yyyyMMdd-HHmmss")))
+    if (!$DryRun) { Remove-OldBackups $InstallRoot }
+}
+if ($ResetData) { Warn "-ResetData: the leaderboards/stats database, settings and race saves are reset (backup: $PlayerBackup)" }
 
-if (!(Test-Path (Join-Path $PayloadRoot "NASCAR\Game\NASCAR_GVR.exe")) -and !$ExtractIfMissing -and !$DryRun) {
+if (!$UpdateMode -and !(Test-Path (Join-Path $PayloadRoot "NASCAR\Game\NASCAR_GVR.exe")) -and !$ExtractIfMissing -and !$DryRun) {
     # nothing unpacked yet and no -DiscPath: find the mounted disc, else ask for it
     $cand = Find-NascarDisc
     if ($cand) { Log "game disc found: $cand" }
@@ -1162,8 +1507,18 @@ if (!(Test-Path (Join-Path $PayloadRoot "NASCAR\Game\NASCAR_GVR.exe")) -and !$Ex
     $ExtractRoot = Join-Path $env:TEMP "NASCAR_GVR_Extract"
     $PayloadRoot = Join-Path $ExtractRoot "File_Group"
     $ExtractIfMissing = $true
+    # an interrupted earlier install can leave a half-unpacked disc here - always start clean
+    if (Test-Path -LiteralPath $ExtractRoot) {
+        Log "removing a leftover disc extraction from an earlier run: $ExtractRoot"
+        Remove-Item -LiteralPath $ExtractRoot -Recurse -Force -ErrorAction SilentlyContinue
+        if (Test-Path -LiteralPath $ExtractRoot) { Fail "Could not remove the old disc extraction $ExtractRoot - close any window using it and run Install.bat again." }
+    }
 }
-if (!(Test-Path (Join-Path $PayloadRoot "NASCAR\Game\NASCAR_GVR.exe"))) {
+if (!$UpdateMode -and !$DryRun -and (Test-Path (Join-Path $PayloadRoot "NASCAR\Game\NASCAR_GVR.exe"))) {
+    $miss = @(Get-MissingPayloadParts)
+    if ($miss.Count) { Fail ("The unpacked game disc at $PayloadRoot is incomplete - missing: " + ($miss -join ", ") + ". Delete that folder and run Install.bat again.") }
+}
+if (!$UpdateMode -and !(Test-Path (Join-Path $PayloadRoot "NASCAR\Game\NASCAR_GVR.exe"))) {
     if ($ExtractIfMissing) { Extract-Payload }
     else { Fail "Game payload not found at $PayloadRoot. Pass -ExtractIfMissing to unpack it from `"$DiscRoot`"." }
 }
@@ -1173,7 +1528,10 @@ $free = (Get-PSDrive ($drive[0]) -ErrorAction SilentlyContinue).Free
 if ($free -and $free -lt 1GB) { Warn ("only {0:N1} GB free on {1} - about 0.8 GB is needed" -f ($free / 1GB), $drive) }
 
 Ensure-DotNet
-if (!$already -or $ForceOverwrite) { Install-Payload $Game $Shell $Gvr }
+if (!$already -or $ForceOverwrite) {
+    Install-Payload $Game $Shell $Gvr
+    if ($PlayerBackup -and !$ResetData) { Restore-RaceSaves $PlayerBackup $Game }
+}
 Fix-DirNames $Game
 Install-SupportDlls $Game $Shell
 Install-GvrIoShim $Game $Shell
@@ -1192,6 +1550,7 @@ Install-Registry $InstallRoot
 Install-OemRev
 Install-Launcher $InstallRoot $Game $Shell
 Verify-Deployment $InstallRoot $Game $Shell $Plus $Db
+Write-InstallMarker $InstallRoot
 
 # the unpacked disc (~800 MB) is only needed during the install
 if (!$DryRun -and $ExtractRoot -like (Join-Path $env:TEMP "*") -and (Test-Path $ExtractRoot)) {
@@ -1216,6 +1575,6 @@ Log "records the command line, the dongle result, every startup state and each F
 Log "============================================================"
 if (!$DryRun) {
     $nl = [Environment]::NewLine
-    $msg = "NASCAR Team Racing is installed in:" + $nl + $InstallRoot + $nl + $nl + "Start it with the NASCAR Team Racing shortcut on your desktop." + $nl + "Settings: nascar_settings.ini in that folder."
+    $msg = "NASCAR Team Racing is " + $(if ($UpdateMode) { "updated" } else { "installed" }) + " in:" + $nl + $InstallRoot + $nl + $nl + "Start it with the NASCAR Team Racing shortcut on your desktop." + $nl + "Settings: nascar_settings.ini in that folder."
     Show-Message $msg
 }

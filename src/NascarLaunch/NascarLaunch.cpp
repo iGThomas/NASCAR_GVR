@@ -93,6 +93,18 @@ static bool reg_read_sz(HKEY root, const char* sub, const char* val, char* out, 
     return true;
 }
 
+// .NET Framework 1.1 - the front end needs it (AMPlayer.exe.config pins v1.1.4322 for the
+// PLUSDE database layer; the race does not use .NET). Detected by the runtime's FILE, like NFSU's
+// GvrLaunch: a working 1.1 often has no NDP registry key, so the registry would falsely say no.
+static bool dotnet11_installed(void)
+{
+    char p[MAX_PATH];
+    UINT n = GetWindowsDirectoryA(p, MAX_PATH);
+    if (!n || n > MAX_PATH - 48) return true;          // cannot tell -> do not block
+    lstrcatA(p, "\\Microsoft.NET\\Framework\\v1.1.4322\\mscorlib.dll");
+    return PathFileExistsA(p) != FALSE;
+}
+
 static void log_pc_config(void)
 {
     logf("---- PC configuration (diagnostic) ----");
@@ -149,6 +161,7 @@ static void log_pc_config(void)
     if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm))
         logf("display : %lux%lu %lubpp @ %luHz (desktop)",
              dm.dmPelsWidth, dm.dmPelsHeight, dm.dmBitsPerPel, dm.dmDisplayFrequency);
+    logf(".net 1.1: %s", dotnet11_installed() ? "yes" : "NO (v1.1.4322\\mscorlib.dll missing)");
 
     logf("---- end PC configuration ----");
 }
@@ -641,13 +654,53 @@ static void check_install(const Settings& s)
         snprintf(db, sizeof(db), "%s\\GVR\\GvrPlus\\game.db", g_root);
         if (PathFileExistsA(db)) check(sqlite, sizeof(sqlite) / sizeof(sqlite[0]));
     }
-    if (!n) { logf("install check: all files present"); return; }
+    if (!n) {
+        logf("install check: all files present");
+        // The front end needs .NET 1.1; without it AMPlayer starts and then hangs or fails with no
+        // explanation. Installed per machine by Install.bat - copying the folder does not bring it.
+        if (s.mode != "race" && !dotnet11_installed())
+            die("NASCAR Team Racing is not fully set up on this PC.\n\n"
+                "Microsoft .NET Framework 1.1, which the game's menus need, was not found\n"
+                "(C:\\Windows\\Microsoft.NET\\Framework\\v1.1.4322).\n\n"
+                "It is installed for you by Install.bat - copying the game folder by hand\n"
+                "does not install it. Please run Install.bat once, then start the game again.");
+        return;
+    }
     die("NASCAR Team Racing cannot start: %d file(s) are missing from\n%s\n\n%s\n"
         "The installer put them there, so your antivirus most likely removed them. It is a false "
         "alarm: these small files let an arcade game run on a normal PC.\n\n"
         "Restore them from Windows Security > Virus & threat protection > Protection history, "
         "add this folder as an exclusion, and run Install.bat again to repair the install "
         "(your settings are kept).", n, g_root, missing.c_str());
+}
+
+// ---------------------------------------------------------------- display scaling (DPI)
+//
+// With Windows display scaling above 100% (125% is the laptop default), a program that does not
+// declare itself DPI-aware is shown a SMALLER screen (1920x1080 at 125% -> 1536x864) and its
+// window is bitmap-stretched by Windows - soft, "stretched" graphics. The launcher, the shell and
+// the race are all such programs. So: the launcher declares itself DPI-aware (it then reads the
+// real screen size for Width/Height = 0 and places the borderless window in real pixels), and the
+// shell and the race inherit the HighDpiAware compatibility layer through __COMPAT_LAYER - no exe
+// is changed. [Display] DpiAware=false turns it off.
+static void setup_dpi(void)
+{
+    if (!ini_bool("Display", "DpiAware", true)) { logf("display scaling: DpiAware=false - Windows stretches the game"); return; }
+    typedef BOOL (WINAPI *PFN_SetCtx)(HANDLE);
+    PFN_SetCtx setCtx = (PFN_SetCtx)GetProcAddress(GetModuleHandleA("user32.dll"), "SetProcessDpiAwarenessContext");
+    if (!(setCtx && setCtx((HANDLE)-4 /*PER_MONITOR_AWARE_V2*/))) SetProcessDPIAware();
+    char cur[512] = "";
+    GetEnvironmentVariableA("__COMPAT_LAYER", cur, sizeof(cur));
+    if (!strstr(cur, "HighDpiAware")) {
+        char layer[600];
+        snprintf(layer, sizeof(layer), "%s%sHighDpiAware", cur, cur[0] ? " " : "");
+        SetEnvironmentVariableA("__COMPAT_LAYER", layer);
+    }
+    HDC dc = GetDC(NULL);
+    int dpi = dc ? GetDeviceCaps(dc, LOGPIXELSX) : 96;
+    if (dc) ReleaseDC(NULL, dc);
+    logf("display scaling: %d%% - launcher DPI-aware, shell and race run HighDpiAware (no Windows stretching)",
+         dpi * 100 / 96);
 }
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
@@ -672,6 +725,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     logf("--- NascarLaunch (root: %s) ---", g_root);
     if (!PathFileExistsA(g_ini))
         die("nascar_settings.ini was not found next to the launcher:\n%s", g_ini);
+    setup_dpi();
 
     // [Debug] Log=true also dumps the PC's hardware/driver profile (for "works on my machine"
     // reports) and is the same flag that switches on the GvrIO shim and SQLite provider logs.

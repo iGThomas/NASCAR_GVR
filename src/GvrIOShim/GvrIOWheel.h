@@ -18,3 +18,6 @@ bool wheel_owns(void* device);
 // Force feedback targets: force -10000..10000 (positive = to the right), springPct 0..100
 // (-1 = the [Wheel] ForceSpring default). Applied by wheel_read at most every 10 ms.
 void wheel_set_force(int force, int springPct);
+
+// True while a wheel is open: its axes then win over the OEM's (GvrIOShim msg 5).
+bool wheel_present(void);

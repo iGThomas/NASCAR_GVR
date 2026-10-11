@@ -20,7 +20,7 @@ $files = @(
     "Install.bat", "Install-NASCAR-GVR-Portable.ps1",
     "Patches\nascar-bytepatches.txt",
     "Deploy\PLUSDE.dll", "Deploy\GvrSqlite.dll", "Deploy\sqlite3.dll", "Deploy\game.db",
-    "Tools\unshield.exe", "Tools\Fix-GvrDirNames.ps1",
+    "Tools\unshield.exe", "Tools\Fix-GvrDirNames.ps1", "Tools\Check-DotNet11.ps1",
     "src\GvrIOShim\build\GvrIO.dll",
     "src\NascarLaunch\build\NascarLaunch.exe", "src\NascarLaunch\nascar_settings.ini", "src\NascarLaunch\NASCAR_GVR.ico",
     "src\GvrSqlite\GvrSqlite.cs",

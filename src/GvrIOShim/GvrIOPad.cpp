@@ -74,6 +74,9 @@ enum {
     UB_SHARE = 1u<<8, UB_OPTIONS = 1u<<9, UB_L3 = 1u<<10, UB_R3 = 1u<<11,
     UB_PS = 1u<<12, UB_DUP = 1u<<13, UB_DDOWN = 1u<<14, UB_DLEFT = 1u<<15, UB_DRIGHT = 1u<<16,
     UB_CAPTURE = 1u<<17,                    // Switch only
+    // A wheel's H-shifter positions (GvrIOWheel.cpp, [Wheel] ButtonN = gear1..gear4): the
+    // arcade's 4-position shifter gear, held while the lever is in that slot.
+    UB_GEAR1 = 1u<<18, UB_GEAR2 = 1u<<19, UB_GEAR3 = 1u<<20, UB_GEAR4 = 1u<<21,
 };
 
 // steer / rx / ry: -127..127 (ry > 0 = stick pushed up); gas / brake: 0..255
@@ -372,6 +375,14 @@ static void latch_switch(DWORD len)
     } else return;
     g_hidGas   = (ub & UB_R2) ? 255 : 0;
     g_hidBrake = (ub & UB_L2) ? 255 : 0;
+    // Menus only: on a Switch pad the operator menu is on Minus, not Plus (Plus stays the race's
+    // Start). So in the front end the two report each other's position: Minus = Options.
+    if (g_isShell) {
+        unsigned plus = ub & UB_OPTIONS, minus = ub & UB_SHARE;
+        ub &= ~(UB_OPTIONS | UB_SHARE);
+        if (minus) ub |= UB_OPTIONS;
+        if (plus)  ub |= UB_SHARE;
+    }
     g_hidBtn = ub;
 }
 
@@ -531,6 +542,8 @@ static const struct { const char* name; unsigned ub; } PAD_BUTTONS[] = {
     // ones above, so a Switch pad is mapped by position names (cross = the bottom button).
     {"l",UB_L1},{"r",UB_R1},{"zl",UB_L2},{"zr",UB_R2},{"minus",UB_SHARE},{"plus",UB_OPTIONS},
     {"home",UB_PS},{"capture",UB_CAPTURE},
+    // H-shifter gears (for [Wheel] ButtonN)
+    {"gear1",UB_GEAR1},{"gear2",UB_GEAR2},{"gear3",UB_GEAR3},{"gear4",UB_GEAR4},
 };
 
 struct Bind { unsigned ub; const ActDef* act; };
@@ -750,6 +763,17 @@ static void inject_keys(BYTE* st)
     if (!p.present || !pad_process_has_focus()) { g_prevBtn = 0; g_quitSince = 0; return; }
     unsigned b = p.btn, edge = b & ~g_prevBtn;
     g_prevBtn = b;
+
+    // H-shifter (a wheel's gear slots): the lever's slot IS the gear - the same state the
+    // sequential up / down buttons move, so both work together. Neutral keeps the last gear.
+    if (!g_isShell) {
+        static const unsigned gearBits[4] = { UB_GEAR1, UB_GEAR2, UB_GEAR3, UB_GEAR4 };
+        for (int gi = 0; gi < 4; ++gi)
+            if ((b & gearBits[gi]) && g_gear != gi + 1) {
+                g_gear = gi + 1;
+                shim_log("pad: H-shifter -> gear %d", g_gear);
+            }
+    }
 
     const PadMap& m = g_isShell ? g_front : g_race;
     char keys[48]; int nk = 0;                   // up to 36 mapped + stick arrow + gear + 4 for quit

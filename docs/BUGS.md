@@ -5,9 +5,55 @@ in `docs/findings/NASCAR_PLAN.md` / the dev tree's `NASCAR\Docs\NASCAR_PLAN.md` 
 
 | # | Bug | Affects | Status |
 |---|---|---|---|
+| 5 | Width/Height = 0 gives a low-resolution, stretched race on PCs with Windows display scaling > 100% | all v1.0.x | **Fixed in source** (1.0.9 launcher, 2026-10-12); workaround: real Width/Height in `[Display]` - user-confirmed |
+| 4 | Re-install after an interrupted install fails: `[MISSING] GVR\GvrPlus\4\schema\NASCARcabinetXml.enc` | installer <= 4.10 | **Fixed in source** (installer 4.11, 2026-10-12) |
 | 3 | Launcher's direct race mode always exits with -1: default `-series 2006NEXTEL` does not exist on the v1.1 disc | Everyone, v1.0.x | **Fixed in source** (2026-10-11, not yet released) |
-| 2 | Shell hangs at startup, no window ever appears, on Windows 10 22H2 PCs | 2 reporters, v1.0.4+ | **Open** — private registry confirmed as the trigger; first fix did NOT cure it; diagnostic trace build sent |
+| 2 | Shell hangs at startup, no window ever appears, on Windows 10 22H2 PCs | 3 reporters, v1.0.4+ | **Fixed for 1 reporter** (2026-10-12): clean .NET 1.1 reinstall + clean install (bug #4). Others: same advice, awaiting results |
 | 1 | Taskbar flickers ("freaks out") while the shell runs, on PCs where something else keeps a taskbar hidden (taskbar tools, extra monitors) | NascarLaunch, v1.0.x | **Fixed in source** (2026-10-11, not yet released) |
+
+---
+
+## 5. Low-resolution, stretched race with Width/Height = 0 (display scaling)
+
+**Reported:** 2026-10-12 - a player using direct race mode saw low-detail, stretched graphics with the
+default `Width=0 / Height=0`; typing `Width=1920 / Height=1080` made it "a lot better".
+
+**Cause:** NascarLaunch, AMPlayer and NASCAR_GVR.exe are not DPI-aware. With Windows display scaling
+above 100% (125% is the laptop default) a DPI-unaware program is told a smaller screen
+(1920x1080 @ 125% -> 1536x864): `GetSystemMetrics` gave the launcher 1536x864 for "0 = screen size",
+the race rendered at that size, and Windows bitmap-stretched its window to the real screen. An earlier
+reporter's log already showed `1536x864 borderless`.
+
+**Fix (1.0.9 launcher):** `setup_dpi()` - the launcher declares itself per-monitor DPI-aware (real
+screen size, real-pixel window placement) and sets `__COMPAT_LAYER=HighDpiAware` for its children, so the
+shell and the race run DPI-aware without any exe change. Verified: the race's DPI awareness went from 0
+(unaware) to 2 (per-monitor aware). `[Display] DpiAware=false` turns it off; the log records the
+display scaling. Not reproducible on the 100%-scaled dev PC itself.
+
+**Workaround (<= 1.0.8):** put the real resolution in `[Display]` Width / Height (user-confirmed).
+
+---
+
+## 4. Leftover disc extraction reused after an interrupted install
+
+**Reported:** 2026-10-12 (the player who reinstalled .NET 1.1). Installer 4.10 log: `game disc found: F:\`
+followed by no extraction at all, then `GVR helper tools source missing` and `GvrPlus payload source
+missing`, and verification failed on `GVR\GvrPlus\4\schema\NASCARcabinetXml.enc`. Antivirus was off - the
+old message wrongly suggested it.
+
+**Cause:** the temporary extraction `%TEMP%\NASCAR_GVR_Extract` is deleted only at the end of a
+SUCCESSFUL install. An interrupted one (here: the earlier .NET/regsvcs trouble) leaves it half-done, and
+the next run checked only for `NASCAR\Game\NASCAR_GVR.exe` in it - present - so it skipped extracting and
+copied from the incomplete folder.
+
+**Fix (installer 4.11):** the disc branch deletes any leftover extraction before unpacking; after
+unpacking, `Get-MissingPayloadParts` checks the game exe, the shell, `GVRPLUS\4\schema\NASCARcabinetXml.enc`
+and `WINDOWS\system32` and stops with a clear message if one is missing; a reused `-PayloadRoot` gets the
+same check; the SQLite stage fails instead of warning when `GVRPLUS` is absent; the verification failure
+message no longer assumes antivirus.
+
+**Workaround (<= 1.0.8):** delete `%TEMP%\NASCAR_GVR_Extract`, mount the disc, run `Install.bat` again.
+**Confirmed 2026-10-12:** the player deleted the folder, re-ran the installer - no more errors.
 
 ---
 
@@ -151,6 +197,66 @@ on the reporters' PCs. Prime suspect: their security software (Reporter A's anti
 and a behaviour monitor freezing a process whose injected DLL patches registry code would look exactly
 like this), then their specific drivers. (With 3D acceleration ON the VM showed a black window instead -
 a VM graphics artefact, not this bug.)
+
+**2026-10-12: Reporter A on v1.0.8 - still hangs.** Shim log shows `shim build: Oct 11 2026 19:35:55`
+(the lock fix is in) and stops after the mode-limit line as before, so the lock was not the cause.
+New: the launcher found **all 3 taskbar windows already hidden before launch** ("0 visible window(s)
+recorded, 3 already hidden") - a taskbar/shell replacement is running (explains bug #1 on his PC; the
+1.0.8 taskbar fix leaves them alone, no restore flood). Heavily modified system: antivirus that flags our
+DLL + a taskbar tool, both of which typically inject into every process. Asked: one launch with real-time
+protection paused / folder excluded, then `RegTrace=true` logs, and which antivirus + taskbar tool.
+
+**2026-10-12: first RegTrace from Reporter A (v1.0.8, pid 7920) - the shell is NOT frozen at startup.**
+The visible part (the paste was cut off) shows normal progress, every call returning:
+`software\gvr\hercules\GvrShell` [private] OK; Anark prefs `DisableGL` present, `DisableDX7` /
+`DisableSW` absent -> DirectX renderer; `nvd3dum.dll` (NVIDIA D3D UMD) loads and probes the adapter 5x;
+then Anark rebuilds its font cache (`ANARK_FONTINFO0..286+` - a very large font collection). So the
+"frozen in the first half-second" theory is wrong; the hang is later in AMPlayer's own startup.
+Watchdog silence is therefore not proof of a held loader lock. Asked for the trace's last 150 lines: a
+`>` without `<` = stuck in a registry call (names DLL + key); a normal end = hung outside the registry
+(suspects: DirectX display-mode change on his 2560x1440 @ 180 Hz screen, the font scan).
+
+**2026-10-12: Reporter C** (`C:\Games\NASCAR_GVR`, 1536x864 desktop = likely 125% scaling on 1920x1080,
+one visible taskbar - no taskbar tool): v1.0.8, `install check: all files present`, same "no visible
+window within 10s". Asked: .NET 1.1 file check + install.log line, `RegTrace` tail as a file, antivirus.
+Note: NascarLaunch has no .NET 1.1 check yet (NFSU's GvrLaunch has `dotnet11_installed`); suggested
+adding it so a missing runtime gives "run Install.bat" instead of a silent hang.
+
+**2026-10-12: full RegTrace of a stuck run (`regtrace-AMPlayer-5188.log`, 1356 calls, 844 ms).**
+Every call returns - no hook is stuck. Sequence: our GvrShell key, Anark prefs (DirectX renderer),
+`nvd3dum.dll` adapter probes, font cache (326 entries), then **.NET 1.1 starts** (mscoree -> mscoreei ->
+fusion -> mscorwks, CLR settings) and reads the user's number/currency formats from
+`HKCU\Control Panel\International` (iDigits ... sCurrency). After `sCurrency` the process makes **no
+further registry call** for the rest of its ~1 min run. A healthy run (dev PC) continues with fusion
+assembly loads and then the plug-ins (`GvrIO_oem.dll`, HerculesPlugIn, ...). So the shell stops
+**inside CLR 1.1 startup, before any game assembly or plug-in loads** - not in our hooks.
+(The dev PC's format is `en-BE` / LCID 0x0C00, which CLR 1.1 does not know, so it never reads those
+overrides; an en-US PC normally does - so the reads alone are not the fault.)
+Next: the users' regional format + one launch with "English (United States)"; Task Manager CPU of the
+hung AMPlayer (busy vs waiting) and any hidden .NET exception dialog; a RegTrace from the working Win10
+VM to compare the same stretch.
+
+**2026-10-12: a clean .NET 1.1 reinstall FIXED it for a player.** He uninstalled the .NET 1.1 our
+installer had put on and installed `dotnetfx.exe` 1.1.4322.573 (English) - the game then worked. Our
+bundle's `dotnetfx.exe` was 1.1.4322.579 **French** (both NASCAR and NFSU), but its `netfx.msi` has the
+same ProductCode {CB2F7EDD-...}, ProductLanguage 1033 and **identical 243 files/versions** - only the
+setup UI strings differ - so the language is not the fault; the player's existing 1.1 was damaged and
+the reinstall repaired it. That matches the RegTrace (the hang is inside CLR 1.1 startup). Likely
+damage source: the regsvcs.exe crash during the .NET MSI (its CLR dialog blocked/was cut short before
+installer 4.10). Second suspect for the remaining hangs: `DbgJITDebugLaunchSetting = 16` (Windows
+default, unknown to CLR 1.1) leaving a crashed shell waiting invisibly - a reinstall would not fix that.
+Actions: English package now bundled (both titles); `Tools\Check-DotNet11.ps1` (read-only report:
+runtime files + versions, GAC 1.0.5000.0 assemblies, ngen, policy, setup/uninstall keys,
+DbgJITDebugLaunchSetting, regional format) to collect from a stuck PC BEFORE it is repaired, so the
+installer/launcher can detect and repair that state automatically. Workaround for players: uninstall
+"Microsoft .NET Framework 1.1", then run Install.bat (>= 1.0.8 / installer 4.10) again.
+
+**2026-10-12: RESOLVED for that player - the game starts.** What fixed it, in order: uninstalled the
+.NET 1.1 our installer had put on and installed the English `dotnetfx.exe`; deleted the leftover
+`%TEMP%\NASCAR_GVR_Extract` (bug #4) and re-ran `Install.bat` (clean install, no errors); menu appears.
+So at least this case of the "shell hangs, no window" bug was a **damaged .NET 1.1 install plus an
+incomplete install**, not the hooks or the graphics. The same two steps are the advice for the other
+reporters; 1.0.9 (installer 4.11) prevents both causes for new installs.
 
 **Next for the reporters:** install 1.0.8 when released (lock fix, `shim build` stamp, `RegTrace`), then
 one launch with the antivirus's real-time protection paused (or the install folder excluded). If that

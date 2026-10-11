@@ -232,3 +232,21 @@ block is dead code (no DirectInput effect GUIDs in the exe).
   run in native mode (Logitech G HUB / Gaming Software) to enumerate as a driving device with
   separate pedals; (3) Steering.dll's shell self-test can write `ForceFeedbackBroken` to the
   NASCAR registry key.
+
+**2026-10-12 - first real-wheel report (Logitech G29 + Driving Force Shifter, v1.0.8):** steering,
+the arcade force feedback (via Steering.dll) and the paddle shifters work; **pedals and the H-shifter
+did not.** Pedals: with a wheel attached, Steering.dll reports a calibrated gas range, so the shim's
+`real_pedals` check passed the OEM's axis values through - and the OEM gas/brake come from the absent
+I/O board (0). Fix (1.0.9 candidate): `wheel_present()` - while our wheel is open its axes always win
+(GvrIOShim.cpp msg 5, race and shell). H-shifter: the shifter's gears are wheel buttons 12..17
+(gear 1..6, 18 = reverse) on G29/G920/G923; new pad actions `gear1`..`gear4` select the arcade's
+4-position shifter gear directly (5th/6th = 4th), defaulted for those wheels, `[Wheel] ButtonN =
+gearN` for others. The log now names each wheel axis the first time it moves
+(`wheel: axis 'rz' moves ...`), so a tester's log shows which axis is gas / brake / clutch.
+Tester follow-up (same day, v1.0.8): the pedals DID work in the menus (driver selection) and stopped
+once the race (NASCAR_GVR.exe) loaded - each program makes its own `real_pedals` decision, and only the
+race's OEM Steering.dll reported a calibrated range. The 1.0.9 `wheel_present()` override covers both.
+Paddles "not working" in the race = automatic transmission: sequential (paddles) and H-shifter gears
+only act in **manual**, chosen on the shell's transmission screen.
+
+**2026-10-12:** on a Switch Pro pad the operator menu is on **Minus** (requested). `latch_switch` swaps the Minus/Plus positions in the front end only (Minus reports as Options); in the race Plus stays Start.

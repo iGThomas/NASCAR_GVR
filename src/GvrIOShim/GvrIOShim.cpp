@@ -77,6 +77,7 @@
 #include <stdarg.h>
 #include <string.h>
 #include "GvrIOPad.h"
+#include "GvrIOWheel.h"
 
 static const DWORD kHeartbeatRva      = 0x0000C02C;  // cGvrIO's worker-ack byte
 static const int   kZeroMsBeforeWeAct = 120;         // let a real worker win first
@@ -529,7 +530,7 @@ void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
         if (id == 5 && ((int*)msg)[0] == 1 && oemFn) {
             static int s_raceAxis[3];
             int axis = ((int*)msg)[2], v = 0;
-            if (axis >= 0 && axis < 3 && pad_axis(axis, &v) && (!r || !real_pedals(oemFn, msg))) {
+            if (axis >= 0 && axis < 3 && pad_axis(axis, &v) && (!r || wheel_present() || !real_pedals(oemFn, msg))) {
                 s_raceAxis[axis] = v;
                 r = &s_raceAxis[axis];
             }
@@ -585,7 +586,9 @@ void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
         static bool s_logged[3];
         int axis = ((int*)msg)[2];
         if (axis >= 0 && axis < 3 && oemFn) {
-            if (!r || !real_pedals(oemFn, msg)) {
+            // A PC wheel (GvrIOWheel.cpp) always wins: with one attached, OEM Steering.dll reports a
+            // calibrated range but only reads the wheel's X axis - its gas / brake would stay 0.
+            if (!r || wheel_present() || !real_pedals(oemFn, msg)) {
                 int v = 0;
                 bool pad = pad_axis(axis, &v);
                 if (axis == 0 && v == 0 && pad_process_has_focus()) {

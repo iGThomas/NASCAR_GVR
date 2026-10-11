@@ -66,6 +66,7 @@ static int   g_rotation = 0, g_range = 900;   // 0 = use the wheel's own range (
 static int   g_deadzone = 2;                  // % of half range, steering
 static int   g_pedalDead = 4;                 // % of full range, pedals
 static unsigned g_btnMap[32];                 // DirectInput button -> pad position bit
+static bool  g_btnUser[32];                   // set in [Wheel] - device defaults leave it alone
 static char  g_devFilter[64] = "";
 // force feedback (percent)
 // shim force feedback (percent); defaults = the arcade's "Normal" Steering Feedback Strength
@@ -117,6 +118,7 @@ static void load_wheel_config(void)
         char key[16]; _snprintf(key, sizeof key, "Button%d", i); key[15] = 0;
         GetPrivateProfileStringA("Wheel", key, "", v, sizeof v, ini);
         if (!v[0]) continue;
+        g_btnUser[i] = true;
         g_btnMap[i] = _stricmp(v, "none") == 0 ? 0 : pad_button_bit(v);
         if (!g_btnMap[i] && _stricmp(v, "none") != 0)
             shim_log("wheel cfg: Button%d = '%s' is not a pad button name - ignored", i, v);
@@ -285,11 +287,24 @@ void wheel_discover(void)
     LeaveCriticalSection(&g_wcs);
     shim_log("wheel: '%s' found (%lu axes, %lu buttons, force feedback %s)", c.name,
              caps.dwAxes, caps.dwButtons, ffb ? "yes" : "no");
+    // Logitech G29 / G920 / G923: the Driving Force Shifter reports its gears as buttons 12..17
+    // (gear 1..6) and 18 (reverse). The arcade shifter has 4 positions: 5th and 6th = 4th.
+    if (strstr(c.name, "G29") || strstr(c.name, "G920") || strstr(c.name, "G923")) {
+        static const char* gears[6] = { "gear1", "gear2", "gear3", "gear4", "gear4", "gear4" };
+        for (int i = 0; i < 6; ++i)
+            if (!g_btnUser[12 + i]) g_btnMap[12 + i] = pad_button_bit(gears[i]);
+        shim_log("wheel: H-shifter defaults - buttons 12..17 = gear 1, 2, 3, 4, 4, 4 ([Wheel] ButtonN overrides)");
+    }
 }
 
 bool wheel_owns(void* device)
 {
     return device && device == (void*)g_dev;
+}
+
+bool wheel_present(void)
+{
+    return !g_woff && g_dev != NULL;
 }
 
 // ---------------------------------------------------------------- reading
@@ -363,6 +378,19 @@ bool wheel_read(int* steer, int* gas, int* brake, unsigned* buttons)
             if (hr == DIERR_INPUTLOST || hr == DIERR_NOTACQUIRED) { g_acquired = false; ffb_release(); }
         }
         if (SUCCEEDED(hr)) {
+            // Which axis is which differs per wheel and driver: log each axis once, the first time
+            // it moves well away from where it started (its name is what [Wheel] Gas / Brake take).
+            static long s_axStart[8]; static bool s_axHave = false, s_axLogged[8];
+            static const char* s_axName[8] = { "x", "y", "z", "rx", "ry", "rz", "slider0", "slider1" };
+            for (int i = 0; i < 8; ++i) {
+                long v = axis_val(s, i);
+                if (!s_axHave) { s_axStart[i] = v; continue; }
+                if (!s_axLogged[i] && labs(v - s_axStart[i]) > 13000) {
+                    s_axLogged[i] = true;
+                    shim_log("wheel: axis '%s' moves (from %ld to %ld)", s_axName[i], s_axStart[i], v);
+                }
+            }
+            s_axHave = true;
             // steering: centre 32768 -> -127..127, optional rotation scaling and dead zone
             double x = (axis_val(s, g_axSteer) - 32768) / 32768.0;
             if (g_rotation > 0 && g_range > g_rotation) x *= (double)g_range / g_rotation;
