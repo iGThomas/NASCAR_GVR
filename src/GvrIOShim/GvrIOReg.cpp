@@ -16,6 +16,7 @@
 
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
+#include <stdio.h>
 #include <string.h>
 #include "GvrIOPad.h"
 #include "GvrPrivReg.h"
@@ -68,9 +69,29 @@ static const PrivRegConfig kNascar = {
 
 void reg_attach(void)
 {
+    // which build is running - a user's log otherwise cannot tell a hotfix from the release
+    shim_log("shim build: %s %s (private registry: lock only on game keys, RegTrace)", __DATE__, __TIME__);
     char ini[MAX_PATH];
     if (!shim_settings_path(ini, sizeof ini)) return;    // no install root: leave the real registry
+    // [Debug] RegTrace=true: log every registry call to <install>\LOG\regtrace-<exe>-<pid>.log
+    char v[16] = "";
+    GetPrivateProfileStringA("Debug", "RegTrace", "", v, sizeof v, ini);
     char* s = strrchr(ini, '\\');
     if (s) *s = 0;                                         // <install>
+    if (_stricmp(v, "true") == 0 || strcmp(v, "1") == 0) {
+        char exe[MAX_PATH] = "", path[MAX_PATH];
+        GetModuleFileNameA(NULL, exe, MAX_PATH);
+        char* b = strrchr(exe, '\\');
+        b = b ? b + 1 : exe;
+        char* dot = strrchr(b, '.');
+        if (dot) *dot = 0;
+        _snprintf(path, sizeof path, "%s\\LOG", ini);
+        path[sizeof path - 1] = 0;
+        CreateDirectoryA(path, NULL);
+        _snprintf(path, sizeof path, "%s\\LOG\\regtrace-%s-%lu.log", ini, b, GetCurrentProcessId());
+        path[sizeof path - 1] = 0;
+        privreg_trace(path);
+        shim_log("registry: call trace -> %s", path);
+    }
     privreg_attach(ini, &kNascar, shim_log);
 }

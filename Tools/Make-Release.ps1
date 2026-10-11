@@ -14,7 +14,8 @@ $name = "NASCAR-GVR-$Version"
 $stage = Join-Path $repo "dist\$name"
 $zip = Join-Path $repo "dist\$name.zip"
 
-# everything the installer reads (keep in sync with Join-Path $SourceRoot ... in the installer)
+# everything the installer reads. KEEP IN SYNC with $ReleaseFiles in Install-NASCAR-GVR-Portable.ps1
+# (its release guard stops an install when any of these is missing - e.g. removed by antivirus).
 $files = @(
     "Install.bat", "Install-NASCAR-GVR-Portable.ps1",
     "Patches\nascar-bytepatches.txt",

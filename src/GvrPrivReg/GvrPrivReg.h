@@ -30,3 +30,7 @@ struct PrivRegConfig {
 // installRoot: the game's install folder. log: optional printf-style trace.
 void privreg_attach(const char* installRoot, const PrivRegConfig* cfg,
                     void (*log)(const char* fmt, ...));
+
+// Diagnostic: log every hooked registry call (caller module, key, result) to path.
+// Call before privreg_attach so the hooks are traced from the first call.
+void privreg_trace(const char* path);

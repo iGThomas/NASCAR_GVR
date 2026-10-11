@@ -158,3 +158,77 @@ Bluetooth on 2026-10-04 (`NASCAR_FINDINGS.md` §14.6).
 **2026-10-05:** removed `GvrIO.xml`'s `<key char="a" name="MotionDisable">` (OEM kept as `GvrIO.xml.oem`). Held, it shows the race's motion-seat HUD panel — on AZERTY it is the A key, which looked like a stray popup. Note that **the race rewrites `GvrSinglePlayer.CTL` when it exits**, so edit it only while no race is running.
 
 **Horn (final, 2026-10-05):** keyboard **J** or pad Circle — the cabinet NOS input (`GvrIO.xml` `name="NOS"`), stopped on release by the GvrIO shim. The `.CTL` `Control - Horn` does nothing in this build and is unbound again. (Rows above that say the horn is the `.CTL` Horn on H/J are superseded.)
+
+### 4.x Nintendo Switch Pro Controller (2026-10-11, untested on hardware)
+
+`GvrIOPad.cpp` reads it through the same raw-HID path as the DS4 (VID `057E`, PID `2009`; the
+first HID pad found wins, XInput still comes first).
+
+* **Wake-up** (`switch_init`, discovery thread, before the handle goes to the game threads): the
+  pad is reopened with write access. USB only: output report `80 02`, `80 03`, `80 02`, `80 04`
+  (handshake, 3 Mbit, handshake, USB-only — SDL's order). Both links: subcommand `03 30` (full
+  report mode) and `30 01` (player LED 1 = visible proof it worked). Subcommand = report `01`,
+  4-bit counter, 8 bytes neutral rumble `00 01 40 40 00 01 40 40`, id, arg. Bluetooth is detected
+  by the HID service GUID `00001124` in the device path. Without write access a Bluetooth pad
+  still works in its simple mode.
+* **Reports** (`latch_switch`): `0x30` / `0x21` — byte 3 `Y X B A SR SL R ZR`, 4
+  `- + RS LS Home Capture`, 5 `down up right left SR SL L ZL`, 6–8 / 9–11 = left / right stick as
+  two 12-bit values (centre ~2048, up = larger; dead zone 200, full 1500, no factory calibration
+  read). `0x3F` simple Bluetooth report — byte 1 `B A Y X L R ZL ZR`, 2 `- + LS RS Home Capture`,
+  3 hat, 4–11 = 16-bit LX LY RX RY.
+* **Mapping by position** (like Xbox): B = Cross, A = Circle, Y = Square, X = Triangle, L/R/ZL/ZR =
+  L1/R1/L2/R2, −/+ = Share/Options, Home = PS, Capture = `capture` (unbound). ini names `l r zl zr
+  minus plus home capture` are accepted; `a b x y` stay the Xbox *positions*.
+* **ZL / ZR are digital** → gas/brake 0 or 255. `[Controller] Pedals = rightstick` (any pad) adds
+  right-stick up/down as gas/brake (max of stick and trigger) and stops the right stick turning
+  the Swingman camera vertically.
+* Verified without hardware: a decoder harness (synthetic `0x30` / `0x21` / `0x3F` reports + a DS4
+  regression) passes, and shell + race run with the new DLL. **Needs a real pad on USB and
+  Bluetooth**: check `pad: Switch Pro Controller over … - full report mode requested` and the
+  player-1 LED, then every button and both sticks.
+
+### 4.y Steering wheels and force feedback (2026-10-11, untested on hardware)
+
+**The OEM already supports a PC force-feedback wheel.** `Steering.dll` (the GvrIO plug-in that
+`GvrIO.xml`'s `<controller type="Steering">` loads, next to both programs) has a DirectInput back
+end: it enumerates attached force-feedback devices of type `DI8DEVTYPE_DRIVING` (0x16), opens one
+exclusive + background, turns autocentre off and creates Spring, Damper, two Sine and a
+ConstantForce effect; only without such a device does it fall back to its HID protocol for the
+cabinet's Happ FFB board. It reads only the wheel's **X axis** (`GetDeviceState(0x110)` at
+`0x10003090`, `lX` as a word); on the cabinet the pedals come from the I/O board.
+
+**What the race sends** (all to GvrIO device 5; `0x45c130`/`0x45c500` at setup, `0x45c650` per
+frame, only when a value changed): `0x1d` spring (magnitude, centre offset), `0x35` damper,
+`0x19` / `0x1b` sine A / B (force, period). Spring and damper ramp in over `FF Spring Ramp Time`
+(3 s). The sines are per-tyre surface (grass `0xF`, rumble strip `0x12`, road) lerped by speed
+(`min(1, |v| / FF Speed Throttle 50)`). Collisions (`0x4d5ab6`, `0x4d5cfc`) set the spring centre
+to +/- Collision Offset with Collision Force for that frame. Steering.dll maps them to DirectInput:
+spring / damper `DICONDITION` coefficients 10000, gain = value x 100, spring offset = centre x 100;
+sines magnitude 10000, offset -5000, gain = force x 100. There is no physics steering torque.
+Arcade defaults (`GvrSinglePlayer.PLR` profile "FF Handling", operator "Steering Feedback
+Strength" Normal / Light = `-handling 0/1`): spring 40 / 25, damper 40 / 25, rumble 70-75 /
+50-55, grass 21-32 / 11-21, collision cars 25/15 (offset/force), walls 35/25. The EA `.CTL` FFB
+block is dead code (no DirectInput effect GUIDs in the exe).
+
+**Our part** (`src\GvrIOShim\GvrIOWheel.cpp`, `[Wheel]` in `nascar_settings.ini`):
+* Input. The shim already answers msg 5 when no I/O-board pedals exist, so the wheel feeds the
+  same `PadState` as the pads: steering -127..127 (optional `Rotation` / `DeviceRange` scaling),
+  gas / brake 0..255 from separate axes (default `y` / `rz`) or one combined axis; each pedal's
+  rest value is learned from the first reading, so either direction works. Buttons map to pad
+  positions (`ButtonN = cross`...; DFGT guesses built in, every press logged with its number); the
+  hat is the D-pad. The wheel is found on the pad discovery thread (first `DI8DEVTYPE_DRIVING`, or
+  `[Wheel] Device=` name match) with our own `IDirectInput8A`, read **non-exclusively**, so it
+  never conflicts with Steering.dll's exclusive hold.
+* Force feedback. `ForceFeedback = arcade` (default) leaves it to Steering.dll - the exact cabinet
+  effects. `shim` = our own spring + damper (arcade Normal 40 / 40, `ForceSpring` / `ForceDamper`
+  / `ForceGain`), exclusive + foreground on our foreground window, for a wheel Steering.dll does
+  not pick up. `off` = none of ours.
+* Trap fixed with it: GvrIOPad's shared `GetDeviceState` hook used to treat every read of >= 256
+  bytes as a keyboard; Steering.dll's 272-byte `DIJOYSTATE2` read would have received the pad's
+  right-stick camera keys as button presses. Now exactly 256 bytes only, and our wheel is skipped.
+* Untested risks for the tester: (1) the shell and the race BOTH load Steering.dll; if the shell
+  keeps the wheel exclusively while the race runs, the race may get no force feedback (the race's
+  acquire would fail) - check that FFB works in a race, not only in the menus; (2) the DFGT must
+  run in native mode (Logitech G HUB / Gaming Software) to enumerate as a driving device with
+  separate pedals; (3) Steering.dll's shell self-test can write `ForceFeedbackBroken` to the
+  NASCAR registry key.

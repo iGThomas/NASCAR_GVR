@@ -44,7 +44,7 @@ param(
     [int]$Width = 0,     # 0 = use the primary screen size (borderless fills it, sharp)
     [int]$Height = 0,
     [string]$Track = "DAYTONA",
-    [string]$Series = "2006NEXTEL",
+    [string]$Series = "2005NEXTEL",   # the only NEXTEL Cup season the v1.1 disc ships data for
     [switch]$Uninstall,
     [switch]$NoGui,
     [switch]$DryRun,
@@ -52,7 +52,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-10-nascar-portable-4.8" # 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
+$Version = "2026-10-11-nascar-portable-4.10" # 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -341,8 +341,8 @@ function Disable-CabinetPlugIns($game) {
 function Install-GvrIoShim($game, $shell) {
     $shim = Join-Path $SourceRoot "src\GvrIOShim\build\GvrIO.dll"
     if (!(Test-Path $shim)) {
-        Warn "GvrIO shim not built (src\GvrIOShim\build.cmd) - the game will hang on startup."
-        return
+        # Assert-ReleaseFiles already stops a release install without it; a dev checkout must build it.
+        Fail "GvrIO.dll (the shim) is missing: $shim - without it the game hangs on startup. Unzip the release again (antivirus?) or run src\GvrIOShim\build.cmd."
     }
     Log "--- GvrIO shim (startup deadlock, dongle gate, private registry, gamepads) ---"
     foreach ($dir in @($game, (Join-Path $shell "bin"))) {
@@ -677,6 +677,40 @@ function Resolve-Dependencies {
 # mixed-mode code uses native C++ exceptions as control flow and that EH interop
 # access-violates on 2.0 (proven in the NFSU work). The plain 1.1 redist fails with
 # MSI 1603 on Windows 10/11 - the fix is slipstreaming SP1 into an admin image.
+# ---- .NET 1.1 crash dialogs must not stall the silent install ----------------------------------
+# During the .NET 1.1 MSI install, regsvcs.exe (COM+ registration for System.EnterpriseServices,
+# which the games do not use) can crash - seen on a fresh Windows 10 VM (2026-10-11). CLR 1.1
+# then shows its "Application has generated an exception that could not be handled" JIT-debug
+# dialog and waits for a click, so the silent install sits at "installing .NET 1.1". With
+# DbgJITDebugLaunchSetting = 1, CLR 1.1 ends a crashed process without asking. Set for the MSI
+# install only, in both registry views (CLR 1.1 is 32-bit: WOW6432Node on 64-bit Windows), and
+# put back afterwards - removed again where it did not exist. Returns whatever $Body outputs.
+function Invoke-QuietClrCrashes([scriptblock]$Body) {
+    $keys = @("HKLM:\SOFTWARE\Microsoft\.NETFramework")
+    if (Test-Path "HKLM:\SOFTWARE\WOW6432Node") { $keys += "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework" }
+    $saved = @()
+    foreach ($k in $keys) {
+        $old = $null
+        try { $old = (Get-ItemProperty -Path $k -Name DbgJITDebugLaunchSetting -ErrorAction Stop).DbgJITDebugLaunchSetting } catch {}
+        $saved += ,@($k, $old)
+        try {
+            if (!(Test-Path $k)) { New-Item -Path $k -Force | Out-Null }
+            New-ItemProperty -Path $k -Name DbgJITDebugLaunchSetting -PropertyType DWord -Value 1 -Force | Out-Null
+        } catch { Warn "could not set DbgJITDebugLaunchSetting in $k ($($_.Exception.Message))" }
+    }
+    Log "  CLR crash dialogs off for the .NET install (DbgJITDebugLaunchSetting = 1)"
+    try { & $Body }
+    finally {
+        foreach ($s in $saved) {
+            try {
+                if ($null -eq $s[1]) { Remove-ItemProperty -Path $s[0] -Name DbgJITDebugLaunchSetting -ErrorAction SilentlyContinue }
+                else { New-ItemProperty -Path $s[0] -Name DbgJITDebugLaunchSetting -PropertyType DWord -Value $s[1] -Force | Out-Null }
+            } catch {}
+        }
+        Log "  CLR crash dialog setting restored"
+    }
+}
+
 function Ensure-DotNet {
     if ($SkipDotNet -or $SkipShell) { return }
     if (Test-Path (Join-Path $env:WINDIR "Microsoft.NET\Framework\v1.1.4322\mscorlib.dll")) { Log ".NET 1.1 present"; return }
@@ -699,8 +733,8 @@ function Ensure-DotNet {
     Start-Process $sp1 -ArgumentList "/Xp:`"$w\netfxsp.msp`"" -Wait | Out-Null
     Start-Process msiexec -ArgumentList "/a `"$w\netfx.msi`" TARGETDIR=`"$adm`" /qn" -Wait | Out-Null
     Start-Process msiexec -ArgumentList "/a `"$adm\netfx.msi`" /p `"$w\netfxsp.msp`" /qn" -Wait | Out-Null
-    $p = Start-Process msiexec -ArgumentList "/i `"$adm\netfx.msi`" /qn /norestart" -Wait -PassThru
-    if ($p.ExitCode -ne 0 -and $p.ExitCode -ne 3010) { Fail ".NET 1.1 SP1 install failed ($($p.ExitCode))" }
+    $code = Invoke-QuietClrCrashes { (Start-Process msiexec -ArgumentList "/i `"$adm\netfx.msi`" /qn /norestart" -Wait -PassThru).ExitCode }
+    if ($code -ne 0 -and $code -ne 3010) { Fail ".NET 1.1 SP1 install failed ($code)" }
     Log "  .NET 1.1 SP1 installed"
 }
 
@@ -839,10 +873,13 @@ function Install-Launcher($root, $game, $shell) {
     $icoSrc = Join-Path $srcDir "NASCAR_GVR.ico"
 
     if (!(Test-Path $exeSrc)) {
-        Warn "NascarLaunch.exe not built - run src\NascarLaunch\build.cmd (needs Visual Studio)."
-        Warn "Falling back to a plain shell shortcut."
+        # It IS in every release zip (and needs no Visual Studio to run); Assert-ReleaseFiles stops a
+        # release install without it. No plain-shell fallback any more: without the launcher the game
+        # runs without its settings or private-registry preload and looks broken. A developer
+        # checkout must build it (src\NascarLaunch\build.cmd).
+        Fail "NascarLaunch.exe is missing: $exeSrc - unzip the release again (antivirus?) and re-run Install.bat."
     }
-    else { Copy-FileIfPresent $exeSrc (Join-Path $root "NascarLaunch.exe") "NascarLaunch.exe" }
+    Copy-FileIfPresent $exeSrc (Join-Path $root "NascarLaunch.exe") "NascarLaunch.exe"
     Copy-FileIfPresent $icoSrc (Join-Path $root "NASCAR_GVR.ico") "icon"
 
     # The settings file is the player's; never overwrite an edited one.
@@ -921,12 +958,14 @@ function Verify-Deployment($root, $game, $shell, $plus, $dbPath) {
     Need (Join-Path $game "LOG")                   $false "crash/trace log folder (engine will not create it; no folder = no trace00N.txt)"
     Need (Join-Path $root "nascar_settings.ini")   $true  "display / controller settings"
     Need (Join-Path $root "nascar_registry.ini")   $false "private registry the shim reads"
-    Need (Join-Path $root "NascarLaunch.exe")      $false "launcher the shortcut runs"
+    Need (Join-Path $root "NascarLaunch.exe")      $true  "launcher the shortcut runs"
+    Need (Join-Path $game "GvrIO_oem.dll")         $true  "OEM GvrIO the shim forwards to"
 
     if (!$SkipShell) {
         Need (Join-Path $shell "bin\AMPlayer.exe")            $true  "Anark shell host"
         Need (Join-Path $shell "Shell.am")                   $true  "shell start scene"
         Need (Join-Path $shell "bin\GvrIO.dll")              $true  "GvrIO shim for the shell (private registry, startup deadlock)"
+        Need (Join-Path $shell "bin\GvrIO_oem.dll")          $true  "OEM GvrIO the shell's shim forwards to"
         Need (Join-Path $shell "bin\Dongle.dll")             $true  "shell dongle self-test (must be the v1.1-patched build)"
         Need (Join-Path $shell "bin\AMPlayer.exe.config")    $false "pins CLR 1.1 (PLUSDE access-violates on CLR 2.0 without it)"
         Need (Join-Path $shell "bin\msvcp71d.dll")           $false "debug runtime (NASCARPlugIn silently fails to load without it)"
@@ -961,7 +1000,7 @@ function Verify-Deployment($root, $game, $shell, $plus, $dbPath) {
         }
     }
 
-    if ($missing -gt 0) { Fail "verification failed: $missing required file(s) missing - see the [MISSING] line(s) above" }
+    if ($missing -gt 0) { Fail "verification failed: $missing required file(s) missing after the install - see the [MISSING] lines in the log. If they were there a moment ago, your antivirus removed them: restore them (Windows Security > Protection history), add the install folder as an exclusion and run Install.bat again." }
     if ($absent -gt 0) { Log "  ($absent optional item(s) absent - not fatal, noted above)" }
     $size = (Get-ChildItem -Recurse $root | Where-Object { !$_.PSIsContainer } | Measure-Object -Sum Length).Sum
     Log ("all required files present ({0:N0} MB installed)" -f ($size / 1MB))
@@ -1000,6 +1039,48 @@ if (!(Test-Admin)) {
     if (!$DryRun) { Fail "Run this from an elevated Administrator PowerShell window (needed for the registry, fonts and the machine environment variable)." }
     Warn "not elevated - fine for -DryRun, but the real install needs an Administrator window"
 }
+
+# ---- release guard: every file the release zip ships must be here, or nothing is installed ----
+# Antivirus (usually Windows Defender) can delete our launcher and DLLs right after the zip is
+# extracted: they preload a DLL into the front end and patch code in memory, which heuristics
+# flag. Installing anyway gave a half-working game (a plain-shell shortcut, no settings, a hang),
+# so stop before touching anything and say which files are gone and why.
+# KEEP IN SYNC with $files in Tools\Make-Release.ps1 (everything the installer reads).
+$ReleaseFiles = @(
+    "Install.bat", "Install-NASCAR-GVR-Portable.ps1",
+    "Patches\nascar-bytepatches.txt",
+    "Deploy\PLUSDE.dll", "Deploy\GvrSqlite.dll", "Deploy\sqlite3.dll", "Deploy\game.db",
+    "Tools\unshield.exe", "Tools\Fix-GvrDirNames.ps1",
+    "src\GvrIOShim\build\GvrIO.dll",
+    "src\NascarLaunch\build\NascarLaunch.exe", "src\NascarLaunch\nascar_settings.ini", "src\NascarLaunch\NASCAR_GVR.ico",
+    "src\GvrSqlite\GvrSqlite.cs",
+    "Dependencies\DotNet11\dotnetfx.exe", "Dependencies\DotNet11\NDP1.1sp1-KB867460-X86.exe",
+    "Dependencies\DXVK\d3d9.dll"
+)
+function Assert-ReleaseFiles {
+    if ($Uninstall) { return }                      # removing an install must work from any folder
+    # A release package (and the NASCAR_GIT repo) always has Install.bat - it is what users run.
+    # The dev tree (D:\NFSU_GVR\NASCAR) does not, and finds several of these elsewhere.
+    if (!(Test-Path -LiteralPath (Join-Path $SourceRoot "Install.bat"))) {
+        Log "release guard skipped: $SourceRoot is not a release package (no Install.bat)"
+        return
+    }
+    $missing = @()
+    foreach ($f in $ReleaseFiles) {
+        $p = Join-Path $SourceRoot $f
+        if (!(Test-Path -LiteralPath $p -PathType Leaf) -or (Get-Item -LiteralPath $p).Length -eq 0) { $missing += $f }
+    }
+    if ($missing.Count -eq 0) { Log "release files: all $($ReleaseFiles.Count) present in $SourceRoot"; return }
+    foreach ($m in $missing) { Warn "  [MISSING from the download] $m" }
+    $nl = [Environment]::NewLine
+    Fail ("The download is incomplete: " + $missing.Count + " file(s) are missing from" + $nl + $SourceRoot + $nl + $nl +
+          ($missing -join $nl) + $nl + $nl +
+          "They are in the release zip, so your antivirus most likely removed them after unzipping. " +
+          "It is a false alarm: these small files let an arcade game run on a normal PC. Restore them from " +
+          "Windows Security > Virus & threat protection > Protection history (or add this folder as an " +
+          "exclusion), unzip the release again and run Install.bat. Nothing was installed.")
+}
+Assert-ReleaseFiles
 
 if ([string]::IsNullOrEmpty($InstallRoot) -and (Test-CanShowDialogs)) {
     while ($true) {
@@ -1043,6 +1124,7 @@ Log "  shell      : $Shell"
 Log "  plus + db  : $Plus"
 
 if ($Uninstall) { Invoke-Uninstall $InstallRoot; exit 0 }
+
 
 $already = Test-Path (Join-Path $Game "NASCAR_GVR.exe")
 if ($already -and !$ForceOverwrite) {
@@ -1132,4 +1214,8 @@ Log "The HASP dongle check is satisfied by the GvrIO shim, so no cabinet hardwar
 Log "If anything goes wrong, read the game's own log first: $Game\LOG\trace00N.txt - it"
 Log "records the command line, the dongle result, every startup state and each FATAL."
 Log "============================================================"
-if (!$DryRun) { Show-Message ("NASCAR Team Racing is installed in:" + [Environment]::NewLine + $InstallRoot + [Environment]::NewLine + [Environment]::NewLine + "Start it with the NASCAR Team Racing shortcut on your desktop." + [Environment]::NewLine + "Settings: nascar_settings.ini in that folder.") }
+if (!$DryRun) {
+    $nl = [Environment]::NewLine
+    $msg = "NASCAR Team Racing is installed in:" + $nl + $InstallRoot + $nl + $nl + "Start it with the NASCAR Team Racing shortcut on your desktop." + $nl + "Settings: nascar_settings.ini in that folder."
+    Show-Message $msg
+}

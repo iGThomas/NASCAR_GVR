@@ -9,7 +9,7 @@ if not exist build mkdir build
 REM shared private-registry library: src\GvrPrivReg in the release, GIT\src\GvrPrivReg in the dev tree
 set PRIVREG=..\GvrPrivReg
 if not exist %PRIVREG%\GvrPrivReg.cpp set PRIVREG=..\..\..\GIT\src\GvrPrivReg
-cl /nologo /LD /MT /EHa /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /Fo:build\ /Fd:build\ GvrIOShim.cpp GvrIOPad.cpp GvrIOReg.cpp %PRIVREG%\GvrPrivReg.cpp /I%PRIVREG% ^
-   /link /OUT:build\GvrIO.dll /DEF:GvrIOShim.def kernel32.lib user32.lib hid.lib setupapi.lib advapi32.lib
+cl /nologo /LD /MT /EHa /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /Fo:build\ /Fd:build\ GvrIOShim.cpp GvrIOPad.cpp GvrIOWheel.cpp GvrIOReg.cpp %PRIVREG%\GvrPrivReg.cpp /I%PRIVREG% ^
+   /link /OUT:build\GvrIO.dll /DEF:GvrIOShim.def kernel32.lib user32.lib hid.lib setupapi.lib advapi32.lib dinput8.lib dxguid.lib
 if errorlevel 1 ( echo BUILD FAILED & exit /b 1 )
 echo BUILD_OK

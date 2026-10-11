@@ -265,6 +265,7 @@ static PFN_EnumKeyA oEnumKeyA; static PFN_EnumKeyW oEnumKeyW;
 
 // ------------------------------------------------------------------ path resolution
 typedef LONG (NTAPI *PFN_NtQueryKey)(HANDLE, int, PVOID, ULONG, PULONG);
+static PFN_NtQueryKey g_NtQueryKey = NULL;
 
 static void normalise(char* p)                 // drop "\wow6432node", "/" -> "\", no trailing "\"
 {
@@ -284,7 +285,7 @@ static bool key_path(HKEY h, char* out, size_t n)
     if (VKey* v = vkey_of(h)) { _snprintf(out, n, "HKLM\\SOFTWARE\\%s", v->section); out[n - 1] = 0; return true; }
     if (h == HKEY_LOCAL_MACHINE) { lstrcpynA(out, "HKLM", (int)n); return true; }
     if ((ULONG_PTR)h & 0x80000000u) return false;          // other predefined roots
-    static PFN_NtQueryKey q = (PFN_NtQueryKey)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryKey");
+    PFN_NtQueryKey q = g_NtQueryKey;     // resolved in privreg_attach, never lazily inside a hook
     if (!q) return false;
     BYTE buf[1024]; ULONG got = 0;
     if (q((HANDLE)h, 3 /*KeyNameInformation*/, buf, sizeof buf, &got) < 0) return false;
@@ -331,12 +332,21 @@ static void w2a(LPCWSTR w, char* a, size_t n)
 
 // ------------------------------------------------------------------ hooks: keys
 // handled=false: not ours, call the original. create=true: make the key if missing.
+//
+// Every RegOpen/RegCreate in the process comes through here - the game's, but also Windows' own
+// and every driver's (OpenGL / DirectDraw / audio, often from inside a DllMain under the loader
+// lock), and kernelbase's private-profile code (IniFileMapping lookups) while it holds its ini
+// lock. So decide "is this one of the game's keys?" WITHOUT g_lock (private_section uses only
+// stack buffers) and take the lock only for the game's own keys. Locking every open made foreign
+// threads queue on g_lock while a game thread held it inside GetPrivateProfileStringA, which can
+// deadlock (lock-order inversion) - the shell then hung at startup with no window on some
+// Windows 10 PCs, cured by GVR_NO_PRIVATE_REGISTRY=1 (NASCAR BUGS.md #2).
 static LONG open_private(HKEY parent, const char* sub, PHKEY out, bool create, bool* handled, LPDWORD disp)
 {
-    Lock lock;
     char sec[200];
     *handled = false;
     if (!out || !private_section(parent, sub, sec, sizeof sec)) return 0;
+    Lock lock;
     *handled = true;
     bool existed = key_exists(sec);
     if (!existed && !create) return ERROR_FILE_NOT_FOUND;
@@ -346,24 +356,24 @@ static LONG open_private(HKEY parent, const char* sub, PHKEY out, bool create, b
     return *out ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
 }
 
-static LONG WINAPI hOpenExA(HKEY h, LPCSTR s, DWORD o, REGSAM sam, PHKEY r)
+static LONG WINAPI xOpenExA(HKEY h, LPCSTR s, DWORD o, REGSAM sam, PHKEY r)
 { bool d; LONG e = open_private(h, s, r, false, &d, NULL); return d ? e : oOpenExA(h, s, o, sam, r); }
-static LONG WINAPI hOpenExW(HKEY h, LPCWSTR s, DWORD o, REGSAM sam, PHKEY r)
+static LONG WINAPI xOpenExW(HKEY h, LPCWSTR s, DWORD o, REGSAM sam, PHKEY r)
 { char a[600]; w2a(s, a, sizeof a); bool d; LONG e = open_private(h, a, r, false, &d, NULL); return d ? e : oOpenExW(h, s, o, sam, r); }
-static LONG WINAPI hOpenA(HKEY h, LPCSTR s, PHKEY r)
+static LONG WINAPI xOpenA(HKEY h, LPCSTR s, PHKEY r)
 { bool d; LONG e = open_private(h, s, r, false, &d, NULL); return d ? e : oOpenA(h, s, r); }
-static LONG WINAPI hOpenW(HKEY h, LPCWSTR s, PHKEY r)
+static LONG WINAPI xOpenW(HKEY h, LPCWSTR s, PHKEY r)
 { char a[600]; w2a(s, a, sizeof a); bool d; LONG e = open_private(h, a, r, false, &d, NULL); return d ? e : oOpenW(h, s, r); }
-static LONG WINAPI hCreateExA(HKEY h, LPCSTR s, DWORD res, LPSTR c, DWORD o, REGSAM sam, LPSECURITY_ATTRIBUTES sa, PHKEY r, LPDWORD disp)
+static LONG WINAPI xCreateExA(HKEY h, LPCSTR s, DWORD res, LPSTR c, DWORD o, REGSAM sam, LPSECURITY_ATTRIBUTES sa, PHKEY r, LPDWORD disp)
 { bool d; LONG e = open_private(h, s, r, true, &d, disp); return d ? e : oCreateExA(h, s, res, c, o, sam, sa, r, disp); }
-static LONG WINAPI hCreateExW(HKEY h, LPCWSTR s, DWORD res, LPWSTR c, DWORD o, REGSAM sam, LPSECURITY_ATTRIBUTES sa, PHKEY r, LPDWORD disp)
+static LONG WINAPI xCreateExW(HKEY h, LPCWSTR s, DWORD res, LPWSTR c, DWORD o, REGSAM sam, LPSECURITY_ATTRIBUTES sa, PHKEY r, LPDWORD disp)
 { char a[600]; w2a(s, a, sizeof a); bool d; LONG e = open_private(h, a, r, true, &d, disp); return d ? e : oCreateExW(h, s, res, c, o, sam, sa, r, disp); }
-static LONG WINAPI hCreateA(HKEY h, LPCSTR s, PHKEY r)
+static LONG WINAPI xCreateA(HKEY h, LPCSTR s, PHKEY r)
 { bool d; LONG e = open_private(h, s, r, true, &d, NULL); return d ? e : oCreateA(h, s, r); }
-static LONG WINAPI hCreateW(HKEY h, LPCWSTR s, PHKEY r)
+static LONG WINAPI xCreateW(HKEY h, LPCWSTR s, PHKEY r)
 { char a[600]; w2a(s, a, sizeof a); bool d; LONG e = open_private(h, a, r, true, &d, NULL); return d ? e : oCreateW(h, s, r); }
 
-static LONG WINAPI hClose(HKEY h)
+static LONG WINAPI xClose(HKEY h)
 {
     VKey* v = vkey_of(h);
     if (!v) return oClose(h);
@@ -399,7 +409,7 @@ static LONG answer(const char* text, bool wide, LPDWORD type, LPBYTE data, LPDWO
     return ERROR_SUCCESS;
 }
 
-static LONG WINAPI hQueryExA(HKEY h, LPCSTR n, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
+static LONG WINAPI xQueryExA(HKEY h, LPCSTR n, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
 {
     VKey* v = vkey_of(h);
     if (!v) return oQueryExA(h, n, r, t, d, cb);
@@ -407,7 +417,7 @@ static LONG WINAPI hQueryExA(HKEY h, LPCSTR n, LPDWORD r, LPDWORD t, LPBYTE d, L
     if (!value_get(v->section, n, text, sizeof text)) return ERROR_FILE_NOT_FOUND;
     return answer(text, false, t, d, cb);
 }
-static LONG WINAPI hQueryExW(HKEY h, LPCWSTR n, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
+static LONG WINAPI xQueryExW(HKEY h, LPCWSTR n, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
 {
     VKey* v = vkey_of(h);
     if (!v) return oQueryExW(h, n, r, t, d, cb);
@@ -428,14 +438,14 @@ static void put_value(VKey* v, const char* name, DWORD type, const BYTE* d, DWOR
     text[sizeof text - 1] = 0;
     value_put(v->section, name, text);
 }
-static LONG WINAPI hSetExA(HKEY h, LPCSTR n, DWORD r, DWORD t, const BYTE* d, DWORD cb)
+static LONG WINAPI xSetExA(HKEY h, LPCSTR n, DWORD r, DWORD t, const BYTE* d, DWORD cb)
 {
     VKey* v = vkey_of(h);
     if (!v) return oSetExA(h, n, r, t, d, cb);
     put_value(v, n, t, d, cb, false);
     return ERROR_SUCCESS;
 }
-static LONG WINAPI hSetExW(HKEY h, LPCWSTR n, DWORD r, DWORD t, const BYTE* d, DWORD cb)
+static LONG WINAPI xSetExW(HKEY h, LPCWSTR n, DWORD r, DWORD t, const BYTE* d, DWORD cb)
 {
     VKey* v = vkey_of(h);
     if (!v) return oSetExW(h, n, r, t, d, cb);
@@ -452,9 +462,9 @@ static LONG delete_value(VKey* v, const char* raw)
     else                              WritePrivateProfileStringA(v->section, nm, NULL, g_store);
     return ERROR_SUCCESS;
 }
-static LONG WINAPI hDelA(HKEY h, LPCSTR n)
+static LONG WINAPI xDelA(HKEY h, LPCSTR n)
 { VKey* v = vkey_of(h); return v ? delete_value(v, n) : oDelA(h, n); }
-static LONG WINAPI hDelW(HKEY h, LPCWSTR n)
+static LONG WINAPI xDelW(HKEY h, LPCWSTR n)
 { VKey* v = vkey_of(h); if (!v) return oDelW(h, n); char a[300]; w2a(n, a, sizeof a); return delete_value(v, a); }
 
 // ------------------------------------------------------------------ hooks: enumeration
@@ -488,14 +498,14 @@ static LONG info(VKey* v, LPDWORD cc, LPDWORD sk, LPDWORD msk, LPDWORD mc, LPDWO
     if (ft) GetSystemTimeAsFileTime(ft);
     return ERROR_SUCCESS;
 }
-static LONG WINAPI hInfoA(HKEY h, LPSTR c, LPDWORD cc, LPDWORD r, LPDWORD sk, LPDWORD msk, LPDWORD mc, LPDWORD nv, LPDWORD mvn, LPDWORD mvd, LPDWORD sd, PFILETIME ft)
+static LONG WINAPI xInfoA(HKEY h, LPSTR c, LPDWORD cc, LPDWORD r, LPDWORD sk, LPDWORD msk, LPDWORD mc, LPDWORD nv, LPDWORD mvn, LPDWORD mvd, LPDWORD sd, PFILETIME ft)
 {
     VKey* v = vkey_of(h);
     if (!v) return oInfoA(h, c, cc, r, sk, msk, mc, nv, mvn, mvd, sd, ft);
     if (c && cc && *cc) *c = 0;
     return info(v, cc, sk, msk, mc, nv, mvn, mvd, sd, ft, false);
 }
-static LONG WINAPI hInfoW(HKEY h, LPWSTR c, LPDWORD cc, LPDWORD r, LPDWORD sk, LPDWORD msk, LPDWORD mc, LPDWORD nv, LPDWORD mvn, LPDWORD mvd, LPDWORD sd, PFILETIME ft)
+static LONG WINAPI xInfoW(HKEY h, LPWSTR c, LPDWORD cc, LPDWORD r, LPDWORD sk, LPDWORD msk, LPDWORD mc, LPDWORD nv, LPDWORD mvn, LPDWORD mvd, LPDWORD sd, PFILETIME ft)
 {
     VKey* v = vkey_of(h);
     if (!v) return oInfoW(h, c, cc, r, sk, msk, mc, nv, mvn, mvd, sd, ft);
@@ -522,7 +532,7 @@ static LONG enum_key(VKey* v, DWORD i, void* name, LPDWORD cch, bool wide)
     if ((int)i >= n) return ERROR_NO_MORE_ITEMS;
     return name_out(g_tmpNames[i], name, cch, wide);
 }
-static LONG WINAPI hEnumKeyExA(HKEY h, DWORD i, LPSTR n, LPDWORD nc, LPDWORD r, LPSTR c, LPDWORD cc, PFILETIME ft)
+static LONG WINAPI xEnumKeyExA(HKEY h, DWORD i, LPSTR n, LPDWORD nc, LPDWORD r, LPSTR c, LPDWORD cc, PFILETIME ft)
 {
     VKey* v = vkey_of(h);
     if (!v) return oEnumKeyExA(h, i, n, nc, r, c, cc, ft);
@@ -530,7 +540,7 @@ static LONG WINAPI hEnumKeyExA(HKEY h, DWORD i, LPSTR n, LPDWORD nc, LPDWORD r, 
     if (ft) GetSystemTimeAsFileTime(ft);
     return enum_key(v, i, n, nc, false);
 }
-static LONG WINAPI hEnumKeyExW(HKEY h, DWORD i, LPWSTR n, LPDWORD nc, LPDWORD r, LPWSTR c, LPDWORD cc, PFILETIME ft)
+static LONG WINAPI xEnumKeyExW(HKEY h, DWORD i, LPWSTR n, LPDWORD nc, LPDWORD r, LPWSTR c, LPDWORD cc, PFILETIME ft)
 {
     VKey* v = vkey_of(h);
     if (!v) return oEnumKeyExW(h, i, n, nc, r, c, cc, ft);
@@ -538,9 +548,9 @@ static LONG WINAPI hEnumKeyExW(HKEY h, DWORD i, LPWSTR n, LPDWORD nc, LPDWORD r,
     if (ft) GetSystemTimeAsFileTime(ft);
     return enum_key(v, i, n, nc, true);
 }
-static LONG WINAPI hEnumKeyA(HKEY h, DWORD i, LPSTR n, DWORD cch)
+static LONG WINAPI xEnumKeyA(HKEY h, DWORD i, LPSTR n, DWORD cch)
 { VKey* v = vkey_of(h); if (!v) return oEnumKeyA(h, i, n, cch); DWORD c = cch; return enum_key(v, i, n, &c, false); }
-static LONG WINAPI hEnumKeyW(HKEY h, DWORD i, LPWSTR n, DWORD cch)
+static LONG WINAPI xEnumKeyW(HKEY h, DWORD i, LPWSTR n, DWORD cch)
 { VKey* v = vkey_of(h); if (!v) return oEnumKeyW(h, i, n, cch); DWORD c = cch; return enum_key(v, i, n, &c, true); }
 
 static LONG enum_value(VKey* v, DWORD i, void* name, LPDWORD cch, LPDWORD type, LPBYTE data, LPDWORD cb, bool wide)
@@ -556,10 +566,108 @@ static LONG enum_value(VKey* v, DWORD i, void* name, LPDWORD cch, LPDWORD type, 
     if (!data && !cb) { if (type) *type = strncmp(text, "dword:", 6) == 0 ? REG_DWORD : REG_SZ; return ERROR_SUCCESS; }
     return answer(text, wide, type, data, cb);
 }
-static LONG WINAPI hEnumValA(HKEY h, DWORD i, LPSTR n, LPDWORD nc, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
+static LONG WINAPI xEnumValA(HKEY h, DWORD i, LPSTR n, LPDWORD nc, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
 { VKey* v = vkey_of(h); return v ? enum_value(v, i, n, nc, t, d, cb, false) : oEnumValA(h, i, n, nc, r, t, d, cb); }
-static LONG WINAPI hEnumValW(HKEY h, DWORD i, LPWSTR n, LPDWORD nc, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
+static LONG WINAPI xEnumValW(HKEY h, DWORD i, LPWSTR n, LPDWORD nc, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
 { VKey* v = vkey_of(h); return v ? enum_value(v, i, n, nc, t, d, cb, true) : oEnumValW(h, i, n, nc, r, t, d, cb); }
+
+// ------------------------------------------------------------------ call trace (diagnostic)
+// privreg_trace(path) logs every hooked call as a pair of lines - ">" on entry, "<" with the
+// result on return - with the calling module, so a hang inside or because of a hook shows up
+// as an entry with no matching return. Written with WriteFile on a handle opened once (no CRT
+// file I/O, no lock of ours), and the caller's module is found with K32GetMappedFileNameA
+// (a kernel query, no loader lock). Off unless the game's shim turns it on.
+#include <intrin.h>
+#pragma intrinsic(_ReturnAddress)
+typedef DWORD (WINAPI *PFN_MappedName)(HANDLE, LPVOID, LPSTR, DWORD);
+static HANDLE g_trace = INVALID_HANDLE_VALUE;
+static PFN_MappedName g_mappedName = NULL;
+
+void privreg_trace(const char* path)
+{
+    g_trace = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                          OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    g_mappedName = (PFN_MappedName)GetProcAddress(GetModuleHandleA("kernel32.dll"), "K32GetMappedFileNameA");
+}
+
+static void tr(const char* dir, const char* fn, void* ret, HKEY h, const char* arg, LONG r)
+{
+    char mod[MAX_PATH] = "?";
+    if (g_mappedName && g_mappedName(GetCurrentProcess(), ret, mod, sizeof mod)) {
+        const char* b = strrchr(mod, '\\');
+        if (b) memmove(mod, b + 1, strlen(b));
+    }
+    char line[1024];
+    int n;
+    if (*dir == '>') n = _snprintf(line, sizeof line - 3, "%lu t%lu > %s %s(%p, \"%s\")",
+                                   GetTickCount(), GetCurrentThreadId(), mod, fn, (void*)h, arg ? arg : "");
+    else             n = _snprintf(line, sizeof line - 3, "%lu t%lu < %s %s(%p) = %ld%s",
+                                   GetTickCount(), GetCurrentThreadId(), mod, fn, (void*)h, r,
+                                   vkey_of(h) ? " [private]" : "");
+    if (n < 0 || n > (int)sizeof line - 3) n = (int)sizeof line - 3;
+    line[n++] = '\r'; line[n++] = '\n';
+    DWORD w;
+    WriteFile(g_trace, line, (DWORD)n, &w, NULL);
+}
+
+// one wrapper per hooked export: trace in, call the real hook body (x...), trace out
+#define TRACED(fn, h, arg, call) do {                                                   \
+        if (g_trace == INVALID_HANDLE_VALUE) return call;                               \
+        void* ret_ = _ReturnAddress();                                                  \
+        tr(">", fn, ret_, h, arg, 0);                                                   \
+        LONG r_ = call;                                                                 \
+        tr("<", fn, ret_, h, NULL, r_);                                                 \
+        return r_;                                                                      \
+    } while (0)
+static const char* wa(LPCWSTR w, char* buf, size_t n) { w2a(w, buf, n); return buf; }
+static const char* ia(DWORD i, char* buf) { _snprintf(buf, 16, "#%lu", i); buf[15] = 0; return buf; }
+
+static LONG WINAPI hOpenExA(HKEY h, LPCSTR s, DWORD o, REGSAM sam, PHKEY r)
+{ TRACED("RegOpenKeyExA", h, s, xOpenExA(h, s, o, sam, r)); }
+static LONG WINAPI hOpenExW(HKEY h, LPCWSTR s, DWORD o, REGSAM sam, PHKEY r)
+{ char a[300]; TRACED("RegOpenKeyExW", h, wa(s, a, sizeof a), xOpenExW(h, s, o, sam, r)); }
+static LONG WINAPI hOpenA(HKEY h, LPCSTR s, PHKEY r)
+{ TRACED("RegOpenKeyA", h, s, xOpenA(h, s, r)); }
+static LONG WINAPI hOpenW(HKEY h, LPCWSTR s, PHKEY r)
+{ char a[300]; TRACED("RegOpenKeyW", h, wa(s, a, sizeof a), xOpenW(h, s, r)); }
+static LONG WINAPI hCreateExA(HKEY h, LPCSTR s, DWORD res, LPSTR c, DWORD o, REGSAM sam, LPSECURITY_ATTRIBUTES sa, PHKEY r, LPDWORD disp)
+{ TRACED("RegCreateKeyExA", h, s, xCreateExA(h, s, res, c, o, sam, sa, r, disp)); }
+static LONG WINAPI hCreateExW(HKEY h, LPCWSTR s, DWORD res, LPWSTR c, DWORD o, REGSAM sam, LPSECURITY_ATTRIBUTES sa, PHKEY r, LPDWORD disp)
+{ char a[300]; TRACED("RegCreateKeyExW", h, wa(s, a, sizeof a), xCreateExW(h, s, res, c, o, sam, sa, r, disp)); }
+static LONG WINAPI hCreateA(HKEY h, LPCSTR s, PHKEY r)
+{ TRACED("RegCreateKeyA", h, s, xCreateA(h, s, r)); }
+static LONG WINAPI hCreateW(HKEY h, LPCWSTR s, PHKEY r)
+{ char a[300]; TRACED("RegCreateKeyW", h, wa(s, a, sizeof a), xCreateW(h, s, r)); }
+static LONG WINAPI hQueryExA(HKEY h, LPCSTR n, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
+{ TRACED("RegQueryValueExA", h, n, xQueryExA(h, n, r, t, d, cb)); }
+static LONG WINAPI hQueryExW(HKEY h, LPCWSTR n, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
+{ char a[300]; TRACED("RegQueryValueExW", h, wa(n, a, sizeof a), xQueryExW(h, n, r, t, d, cb)); }
+static LONG WINAPI hSetExA(HKEY h, LPCSTR n, DWORD res, DWORD t, const BYTE* d, DWORD cb)
+{ TRACED("RegSetValueExA", h, n, xSetExA(h, n, res, t, d, cb)); }
+static LONG WINAPI hSetExW(HKEY h, LPCWSTR n, DWORD res, DWORD t, const BYTE* d, DWORD cb)
+{ char a[300]; TRACED("RegSetValueExW", h, wa(n, a, sizeof a), xSetExW(h, n, res, t, d, cb)); }
+static LONG WINAPI hDelA(HKEY h, LPCSTR n)
+{ TRACED("RegDeleteValueA", h, n, xDelA(h, n)); }
+static LONG WINAPI hDelW(HKEY h, LPCWSTR n)
+{ char a[300]; TRACED("RegDeleteValueW", h, wa(n, a, sizeof a), xDelW(h, n)); }
+static LONG WINAPI hClose(HKEY h)
+{ TRACED("RegCloseKey", h, NULL, xClose(h)); }
+static LONG WINAPI hInfoA(HKEY h, LPSTR c, LPDWORD cc, LPDWORD r, LPDWORD sk, LPDWORD msk, LPDWORD mc, LPDWORD nv, LPDWORD mvn, LPDWORD mvd, LPDWORD sd, PFILETIME ft)
+{ TRACED("RegQueryInfoKeyA", h, NULL, xInfoA(h, c, cc, r, sk, msk, mc, nv, mvn, mvd, sd, ft)); }
+static LONG WINAPI hInfoW(HKEY h, LPWSTR c, LPDWORD cc, LPDWORD r, LPDWORD sk, LPDWORD msk, LPDWORD mc, LPDWORD nv, LPDWORD mvn, LPDWORD mvd, LPDWORD sd, PFILETIME ft)
+{ TRACED("RegQueryInfoKeyW", h, NULL, xInfoW(h, c, cc, r, sk, msk, mc, nv, mvn, mvd, sd, ft)); }
+static LONG WINAPI hEnumValA(HKEY h, DWORD i, LPSTR n, LPDWORD nc, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
+{ char a[16]; TRACED("RegEnumValueA", h, ia(i, a), xEnumValA(h, i, n, nc, r, t, d, cb)); }
+static LONG WINAPI hEnumValW(HKEY h, DWORD i, LPWSTR n, LPDWORD nc, LPDWORD r, LPDWORD t, LPBYTE d, LPDWORD cb)
+{ char a[16]; TRACED("RegEnumValueW", h, ia(i, a), xEnumValW(h, i, n, nc, r, t, d, cb)); }
+static LONG WINAPI hEnumKeyExA(HKEY h, DWORD i, LPSTR n, LPDWORD nc, LPDWORD r, LPSTR c, LPDWORD cc, PFILETIME ft)
+{ char a[16]; TRACED("RegEnumKeyExA", h, ia(i, a), xEnumKeyExA(h, i, n, nc, r, c, cc, ft)); }
+static LONG WINAPI hEnumKeyExW(HKEY h, DWORD i, LPWSTR n, LPDWORD nc, LPDWORD r, LPWSTR c, LPDWORD cc, PFILETIME ft)
+{ char a[16]; TRACED("RegEnumKeyExW", h, ia(i, a), xEnumKeyExW(h, i, n, nc, r, c, cc, ft)); }
+static LONG WINAPI hEnumKeyA(HKEY h, DWORD i, LPSTR n, DWORD cch)
+{ char a[16]; TRACED("RegEnumKeyA", h, ia(i, a), xEnumKeyA(h, i, n, cch)); }
+static LONG WINAPI hEnumKeyW(HKEY h, DWORD i, LPWSTR n, DWORD cch)
+{ char a[16]; TRACED("RegEnumKeyW", h, ia(i, a), xEnumKeyW(h, i, n, cch)); }
 
 // ------------------------------------------------------------------ hot-patching
 static bool hotpatch(HMODULE mod, const char* name, void* hook, void** orig)
@@ -634,6 +742,7 @@ void privreg_attach(const char* installRoot, const PrivRegConfig* cfg, void (*lo
     if (!installRoot || !*installRoot || !cfg) return;
     g_cfg = cfg;
     InitializeCriticalSection(&g_lock);
+    g_NtQueryKey = (PFN_NtQueryKey)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryKey");
     lstrcpynA(g_root, installRoot, sizeof g_root);
     size_t L = strlen(g_root);
     while (L && g_root[L - 1] == '\\') g_root[--L] = 0;

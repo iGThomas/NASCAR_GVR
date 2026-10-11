@@ -4,7 +4,9 @@
 //
 //  Same pads and the same layout as NFS Underground's GvrInputEmu: an Xbox pad
 //  (or anything Steam Input presents as one) through XInput, and a PS4
-//  DualShock 4 through raw HID, over USB or Bluetooth.
+//  DualShock 4 or a Nintendo Switch Pro Controller through raw HID, over USB or
+//  Bluetooth. The Switch pad's ZL/ZR are digital, so [Controller] Pedals =
+//  rightstick can put gas / brake on the right stick instead (any pad).
 //
 //  WHERE THE PAD PLUGS IN  (NASCAR_FINDINGS.md section 14)
 //  The cabinet reaches BOTH programs - the AMPlayer front end and the
@@ -55,11 +57,12 @@
 #include <string.h>
 #include <ctype.h>
 #include "GvrIOPad.h"
+#include "GvrIOWheel.h"
 
 static HMODULE g_self    = NULL;
 static bool    g_isShell = false;
 static bool    g_off     = false;          // GVRIOSHIM_NO_PAD=1
-static CRITICAL_SECTION g_cs;              // pad state and the DS4 handle
+static CRITICAL_SECTION g_cs;              // pad state and the HID pad handle
 static volatile LONG g_started = 0, g_ready = 0;
 
 // ------------------------------------------------------------------ pad buttons
@@ -70,11 +73,16 @@ enum {
     UB_L1 = 1u<<4, UB_R1 = 1u<<5, UB_L2 = 1u<<6, UB_R2 = 1u<<7,
     UB_SHARE = 1u<<8, UB_OPTIONS = 1u<<9, UB_L3 = 1u<<10, UB_R3 = 1u<<11,
     UB_PS = 1u<<12, UB_DUP = 1u<<13, UB_DDOWN = 1u<<14, UB_DLEFT = 1u<<15, UB_DRIGHT = 1u<<16,
+    UB_CAPTURE = 1u<<17,                    // Switch only
 };
 
 // steer / rx / ry: -127..127 (ry > 0 = stick pushed up); gas / brake: 0..255
 struct PadState { bool present; int steer; int gas; int brake; int rx; int ry; unsigned btn; };
 static PadState g_pad;
+// [Controller] Pedals = rightstick: gas / brake from the right stick (up / down) as well as the
+// triggers - for pads with digital triggers (Switch Pro ZL / ZR). The stick then no longer
+// turns the race camera.
+static bool g_pedalsStick = false;
 
 // steering -> -127..127 with the dead zone cut out (no jump at its edge)
 static int scale_stick(int v, int deadzone, int full)
@@ -118,8 +126,12 @@ static void load_xinput(void)
     shim_log("pad: XInput not available");
 }
 
-// ------------------------------------------------------------------ DS4 (raw HID)
-static HANDLE     g_ds4 = INVALID_HANDLE_VALUE;
+// ------------------------------------------------------------------ raw HID pads (DS4, Switch Pro)
+// A PlayStation DS4 or a Nintendo Switch Pro Controller, read straight from HID. One pad at
+// a time; the discovery thread opens it, the game threads drain its reports.
+enum { HID_NONE, HID_DS4, HID_SWITCH };
+static int        g_hidKind = HID_NONE;
+static HANDLE     g_hid = INVALID_HANDLE_VALUE;
 static OVERLAPPED g_ov;
 static HANDLE     g_ev = NULL;
 static bool       g_readPending = false;
@@ -127,18 +139,75 @@ static bool       g_readPending = false;
 // Bluetooth much larger (547 seen). A short buffer makes the Bluetooth read fail.
 static BYTE       g_rpt[1024];
 static DWORD      g_rptLen = 78;
-static int        g_ds4Steer = 0, g_ds4Gas = 0, g_ds4Brake = 0, g_ds4Rx = 0, g_ds4Ry = 0;
-static unsigned   g_ds4Btn = 0;
+static int        g_hidSteer = 0, g_hidGas = 0, g_hidBrake = 0, g_hidRx = 0, g_hidRy = 0;
+static unsigned   g_hidBtn = 0;
 
-// Runs on the discovery thread. A DS4 exposes several HID top-level collections; open the
-// GAMEPAD one (usage page 1, usage 5/4), falling back to the first Sony interface.
-static void open_ds4(void)
+static const char* hid_name(int kind)
+{
+    return kind == HID_SWITCH ? "Switch Pro Controller" : "PlayStation controller";
+}
+
+// Switch Pro output: report 0x80 = USB-only commands; report 0x01 = a subcommand, after a
+// packet counter and 8 bytes of neutral rumble. Written on the discovery thread before the
+// pad is handed to the game threads, so nothing else uses the handle yet.
+static bool switch_write(HANDLE h, DWORD outLen, const BYTE* data, DWORD n)
+{
+    BYTE buf[128] = { 0 };
+    if (outLen > sizeof buf) outLen = sizeof buf;
+    if (n > outLen) n = outLen;
+    memcpy(buf, data, n);
+    OVERLAPPED ov; memset(&ov, 0, sizeof ov);
+    ov.hEvent = CreateEventA(NULL, TRUE, FALSE, NULL);
+    DWORD wr = 0;
+    bool ok = WriteFile(h, buf, outLen, &wr, &ov) != 0;
+    if (!ok && GetLastError() == ERROR_IO_PENDING) {
+        if (WaitForSingleObject(ov.hEvent, 300) == WAIT_OBJECT_0) ok = GetOverlappedResult(h, &ov, &wr, FALSE) != 0;
+        else { CancelIo(h); ok = false; }
+    }
+    CloseHandle(ov.hEvent);
+    return ok;
+}
+static bool switch_subcommand(HANDLE h, DWORD outLen, BYTE cmd, BYTE arg)
+{
+    static BYTE counter = 0;
+    BYTE r[12] = { 0x01, (BYTE)(counter++ & 0x0F), 0x00, 0x01, 0x40, 0x40, 0x00, 0x01, 0x40, 0x40, cmd, arg };
+    return switch_write(h, outLen, r, sizeof r);
+}
+
+// Wake a Switch Pro pad. Over USB it sends nothing until the handshake (0x80 0x02 / 0x03 /
+// 0x02 / 0x04 = handshake, 3 Mbit, handshake, USB only - the order SDL uses). On both links,
+// subcommand 0x03 0x30 switches it to the full report (12-bit sticks, 60 Hz+) and 0x30 0x01
+// lights player LED 1, a visible sign that it worked. Without write access a Bluetooth pad
+// still sends its simple report (0x3F), which latch_switch also reads.
+static void switch_init(HANDLE h, DWORD outLen, bool usb)
+{
+    if (!outLen) { shim_log("pad: Switch Pro Controller is read-only - simple Bluetooth mode only"); return; }
+    if (usb) {
+        static const BYTE seq[4] = { 0x02, 0x03, 0x02, 0x04 };
+        for (int i = 0; i < 4; ++i) {
+            BYTE c[2] = { 0x80, seq[i] };
+            if (!switch_write(h, outLen, c, 2)) { shim_log("pad: Switch Pro USB handshake step %d failed", i); return; }
+            Sleep(60);
+        }
+    }
+    bool full = switch_subcommand(h, outLen, 0x03, 0x30);
+    Sleep(60);
+    switch_subcommand(h, outLen, 0x30, 0x01);
+    shim_log("pad: Switch Pro Controller over %s - full report mode %s", usb ? "USB" : "Bluetooth",
+             full ? "requested" : "NOT set (simple Bluetooth mode)");
+}
+
+// Runs on the discovery thread. A pad exposes several HID top-level collections; open the
+// GAMEPAD one (usage page 1, usage 5/4), falling back to the first interface of the vendor.
+static void open_hid(void)
 {
     GUID hidGuid; HidD_GetHidGuid(&hidGuid);
     HDEVINFO di = SetupDiGetClassDevsA(&hidGuid, NULL, NULL, DIGCF_PRESENT | DIGCF_DEVICEINTERFACE);
     if (di == INVALID_HANDLE_VALUE) return;
     HANDLE found = INVALID_HANDLE_VALUE, fallback = INVALID_HANDLE_VALUE;
-    DWORD foundLen = 78, fallbackLen = 78;
+    DWORD foundLen = 78, fallbackLen = 78, foundOut = 0, fallbackOut = 0;
+    int foundKind = HID_NONE, fallbackKind = HID_NONE;
+    bool foundUsb = false, fallbackUsb = false;
 
     SP_DEVICE_INTERFACE_DATA ifd; ifd.cbSize = sizeof(ifd);
     for (DWORD i = 0; found == INVALID_HANDLE_VALUE && SetupDiEnumDeviceInterfaces(di, NULL, &hidGuid, i, &ifd); ++i) {
@@ -153,22 +222,39 @@ static void open_ds4(void)
                                    NULL, OPEN_EXISTING, FILE_FLAG_OVERLAPPED, NULL);
             if (h != INVALID_HANDLE_VALUE) {
                 HIDD_ATTRIBUTES at; at.Size = sizeof(at);
-                if (HidD_GetAttributes(h, &at) && at.VendorID == 0x054C) {
-                    unsigned inLen = 0, page = 0, usage = 0;
+                int kind = HID_NONE;
+                if (HidD_GetAttributes(h, &at)) {
+                    if (at.VendorID == 0x054C) kind = HID_DS4;
+                    else if (at.VendorID == 0x057E && at.ProductID == 0x2009) kind = HID_SWITCH;
+                }
+                if (kind == HID_SWITCH) {
+                    // the Switch pad needs output reports: reopen with write access if allowed
+                    HANDLE rw = CreateFileA(det->DevicePath, GENERIC_READ | GENERIC_WRITE,
+                                            FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+                                            FILE_FLAG_OVERLAPPED, NULL);
+                    if (rw != INVALID_HANDLE_VALUE) { CloseHandle(h); h = rw; }
+                }
+                if (kind != HID_NONE) {
+                    unsigned inLen = 0, outLen = 0, page = 0, usage = 0;
                     PHIDP_PREPARSED_DATA pp = NULL;
                     if (HidD_GetPreparsedData(h, &pp)) {
                         HIDP_CAPS caps;
                         if (HidP_GetCaps(pp, &caps) == HIDP_STATUS_SUCCESS) {
-                            inLen = caps.InputReportByteLength; page = caps.UsagePage; usage = caps.Usage;
+                            inLen = caps.InputReportByteLength; outLen = caps.OutputReportByteLength;
+                            page = caps.UsagePage; usage = caps.Usage;
                         }
                         HidD_FreePreparsedData(pp);
                     }
                     DWORD len = (inLen > 0 && inLen <= sizeof(g_rpt)) ? inLen : 78;
+                    // Bluetooth HID interfaces carry the HID service class GUID 00001124-... in their path
+                    bool usb = strstr(det->DevicePath, "00001124") == NULL;
                     if (page == 0x01 && (usage == 0x05 || usage == 0x04)) {
-                        found = h; foundLen = len; h = INVALID_HANDLE_VALUE;
-                        shim_log("pad: PlayStation controller VID 054C PID %04X, report %lu bytes", at.ProductID, len);
+                        found = h; foundLen = len; foundOut = outLen; foundKind = kind; foundUsb = usb;
+                        h = INVALID_HANDLE_VALUE;
+                        shim_log("pad: %s VID %04X PID %04X, report %lu bytes", hid_name(kind), at.VendorID, at.ProductID, len);
                     } else if (fallback == INVALID_HANDLE_VALUE) {
-                        fallback = h; fallbackLen = len; h = INVALID_HANDLE_VALUE;
+                        fallback = h; fallbackLen = len; fallbackOut = outLen; fallbackKind = kind; fallbackUsb = usb;
+                        h = INVALID_HANDLE_VALUE;
                     }
                 }
                 if (h != INVALID_HANDLE_VALUE) CloseHandle(h);
@@ -179,22 +265,37 @@ static void open_ds4(void)
     SetupDiDestroyDeviceInfoList(di);
 
     if (found == INVALID_HANDLE_VALUE && fallback != INVALID_HANDLE_VALUE) {
-        found = fallback; foundLen = fallbackLen; fallback = INVALID_HANDLE_VALUE;
-        shim_log("pad: Sony HID interface without gamepad usage - using it as a fallback");
+        found = fallback; foundLen = fallbackLen; foundOut = fallbackOut; foundKind = fallbackKind; foundUsb = fallbackUsb;
+        fallback = INVALID_HANDLE_VALUE;
+        shim_log("pad: %s HID interface without gamepad usage - using it as a fallback", hid_name(foundKind));
     }
     if (fallback != INVALID_HANDLE_VALUE) CloseHandle(fallback);
     if (found == INVALID_HANDLE_VALUE) return;
 
-    // Bluetooth DS4 sends only the basic report until feature 0x02 is read; that read
-    // switches it to the full report (id 0x11) the decoder needs. Harmless over USB.
-    BYTE feat[64] = { 0x02 };
-    HidD_GetFeature(found, feat, sizeof(feat));
+    if (foundKind == HID_DS4) {
+        // Bluetooth DS4 sends only the basic report until feature 0x02 is read; that read
+        // switches it to the full report (id 0x11) the decoder needs. Harmless over USB.
+        BYTE feat[64] = { 0x02 };
+        HidD_GetFeature(found, feat, sizeof(feat));
+    } else {
+        switch_init(found, foundOut, foundUsb);
+    }
 
     EnterCriticalSection(&g_cs);
-    g_ds4 = found; g_rptLen = foundLen; g_readPending = false;
+    g_hid = found; g_hidKind = foundKind; g_rptLen = foundLen; g_readPending = false;
     memset(&g_ov, 0, sizeof g_ov); g_ov.hEvent = g_ev;
-    g_ds4Steer = 0; g_ds4Gas = 0; g_ds4Brake = 0; g_ds4Rx = 0; g_ds4Ry = 0; g_ds4Btn = 0;
+    g_hidSteer = 0; g_hidGas = 0; g_hidBrake = 0; g_hidRx = 0; g_hidRy = 0; g_hidBtn = 0;
     LeaveCriticalSection(&g_cs);
+}
+
+static unsigned hat_buttons(int hat)                 // 0 = up, clockwise; 8+ = centred
+{
+    unsigned ub = 0;
+    if (hat == 0 || hat == 1 || hat == 7) ub |= UB_DUP;
+    if (hat == 1 || hat == 2 || hat == 3) ub |= UB_DRIGHT;
+    if (hat == 3 || hat == 4 || hat == 5) ub |= UB_DDOWN;
+    if (hat == 5 || hat == 6 || hat == 7) ub |= UB_DLEFT;
+    return ub;
 }
 
 // One DS4 input report -> latched state. USB: report 0x01, payload at +1.
@@ -207,15 +308,15 @@ static void latch_ds4(DWORD len)
     else return;
     if ((DWORD)(o + 10) > len) return;
 
-    g_ds4Steer = scale_stick((int)g_rpt[o + 1] - 128, 8, 127);   // left stick X
-    g_ds4Rx    = scale_stick((int)g_rpt[o + 3] - 128, 8, 127);   // right stick X
-    g_ds4Ry    = scale_stick(128 - (int)g_rpt[o + 4], 8, 127);   // right stick Y (HID: 0 = up)
-    g_ds4Brake = scale_trigger(g_rpt[o + 8]);                    // L2
-    g_ds4Gas   = scale_trigger(g_rpt[o + 9]);                    // R2
+    g_hidSteer = scale_stick((int)g_rpt[o + 1] - 128, 8, 127);   // left stick X
+    g_hidRx    = scale_stick((int)g_rpt[o + 3] - 128, 8, 127);   // right stick X
+    g_hidRy    = scale_stick(128 - (int)g_rpt[o + 4], 8, 127);   // right stick Y (HID: 0 = up)
+    g_hidBrake = scale_trigger(g_rpt[o + 8]);                    // L2
+    g_hidGas   = scale_trigger(g_rpt[o + 9]);                    // R2
 
     // byte 5 = hat (low nibble) + face buttons, byte 6 = shoulders/sticks, byte 7 = PS
-    int b5 = g_rpt[o + 5], b6 = g_rpt[o + 6], b7 = g_rpt[o + 7], hat = b5 & 0x0F;
-    unsigned ub = 0;
+    int b5 = g_rpt[o + 5], b6 = g_rpt[o + 6], b7 = g_rpt[o + 7];
+    unsigned ub = hat_buttons(b5 & 0x0F);
     if (b5 & 0x10) ub |= UB_SQUARE;   if (b5 & 0x20) ub |= UB_CROSS;
     if (b5 & 0x40) ub |= UB_CIRCLE;   if (b5 & 0x80) ub |= UB_TRIANGLE;
     if (b6 & 0x01) ub |= UB_L1;       if (b6 & 0x02) ub |= UB_R1;
@@ -223,44 +324,94 @@ static void latch_ds4(DWORD len)
     if (b6 & 0x10) ub |= UB_SHARE;    if (b6 & 0x20) ub |= UB_OPTIONS;
     if (b6 & 0x40) ub |= UB_L3;       if (b6 & 0x80) ub |= UB_R3;
     if (b7 & 0x01) ub |= UB_PS;
-    if (hat == 0 || hat == 1 || hat == 7) ub |= UB_DUP;
-    if (hat == 1 || hat == 2 || hat == 3) ub |= UB_DRIGHT;
-    if (hat == 3 || hat == 4 || hat == 5) ub |= UB_DDOWN;
-    if (hat == 5 || hat == 6 || hat == 7) ub |= UB_DLEFT;
-    g_ds4Btn = ub;
+    g_hidBtn = ub;
 }
 
-static void close_ds4(const char* why)
+// One Switch Pro input report -> latched state. Buttons map by POSITION, like the Xbox pad:
+// B (bottom) = Cross, A (right) = Circle, Y (left) = Square, X (top) = Triangle.
+//   0x30 full report (and the 0x21 subcommand replies, which carry the same block):
+//     3 = Y X B A SR SL R ZR, 4 = - + RS LS Home Capture, 5 = down up right left SR SL L ZL,
+//     6..8 / 9..11 = left / right stick, two 12-bit values each (centre ~2048, up = larger).
+//   0x3F simple Bluetooth report (before the mode switch):
+//     1 = B A Y X L R ZL ZR, 2 = - + LS RS Home Capture, 3 = hat, 4..11 = 16-bit LX LY RX RY.
+// ZL / ZR are digital: full gas / brake while held ([Controller] Pedals = rightstick for analog).
+static void latch_switch(DWORD len)
 {
-    CancelIo(g_ds4);
-    CloseHandle(g_ds4);
-    g_ds4 = INVALID_HANDLE_VALUE; g_readPending = false;
-    shim_log("pad: PlayStation controller closed (%s)", why);
+    unsigned ub = 0;
+    if ((g_rpt[0] == 0x30 || g_rpt[0] == 0x21) && len >= 12) {
+        int r = g_rpt[3], s = g_rpt[4], l = g_rpt[5];
+        if (r & 0x01) ub |= UB_SQUARE;   if (r & 0x02) ub |= UB_TRIANGLE;
+        if (r & 0x04) ub |= UB_CROSS;    if (r & 0x08) ub |= UB_CIRCLE;
+        if (r & 0x40) ub |= UB_R1;       if (r & 0x80) ub |= UB_R2;
+        if (s & 0x01) ub |= UB_SHARE;    if (s & 0x02) ub |= UB_OPTIONS;
+        if (s & 0x04) ub |= UB_R3;       if (s & 0x08) ub |= UB_L3;
+        if (s & 0x10) ub |= UB_PS;       if (s & 0x20) ub |= UB_CAPTURE;
+        if (l & 0x01) ub |= UB_DDOWN;    if (l & 0x02) ub |= UB_DUP;
+        if (l & 0x04) ub |= UB_DRIGHT;   if (l & 0x08) ub |= UB_DLEFT;
+        if (l & 0x40) ub |= UB_L1;       if (l & 0x80) ub |= UB_L2;
+        const BYTE* L = g_rpt + 6; const BYTE* R = g_rpt + 9;
+        int lx = L[0] | ((L[1] & 0x0F) << 8);
+        int rx = R[0] | ((R[1] & 0x0F) << 8), ry = (R[1] >> 4) | (R[2] << 4);
+        g_hidSteer = scale_stick(lx - 2048, 200, 1500);
+        g_hidRx    = scale_stick(rx - 2048, 200, 1500);
+        g_hidRy    = scale_stick(ry - 2048, 200, 1500);
+    } else if (g_rpt[0] == 0x3F && len >= 12) {
+        int b1 = g_rpt[1], b2 = g_rpt[2];
+        ub = hat_buttons(g_rpt[3]);
+        if (b1 & 0x01) ub |= UB_CROSS;   if (b1 & 0x02) ub |= UB_CIRCLE;
+        if (b1 & 0x04) ub |= UB_SQUARE;  if (b1 & 0x08) ub |= UB_TRIANGLE;
+        if (b1 & 0x10) ub |= UB_L1;      if (b1 & 0x20) ub |= UB_R1;
+        if (b1 & 0x40) ub |= UB_L2;      if (b1 & 0x80) ub |= UB_R2;
+        if (b2 & 0x01) ub |= UB_SHARE;   if (b2 & 0x02) ub |= UB_OPTIONS;
+        if (b2 & 0x04) ub |= UB_L3;      if (b2 & 0x08) ub |= UB_R3;
+        if (b2 & 0x10) ub |= UB_PS;      if (b2 & 0x20) ub |= UB_CAPTURE;
+        int lx = g_rpt[4] | (g_rpt[5] << 8), rx = g_rpt[8] | (g_rpt[9] << 8), ry = g_rpt[10] | (g_rpt[11] << 8);
+        g_hidSteer = scale_stick(lx - 32768, 3000, 32767);
+        g_hidRx    = scale_stick(rx - 32768, 3000, 32767);
+        g_hidRy    = scale_stick(32768 - ry, 3000, 32767);           // HID: 0 = up
+    } else return;
+    g_hidGas   = (ub & UB_R2) ? 255 : 0;
+    g_hidBrake = (ub & UB_L2) ? 255 : 0;
+    g_hidBtn = ub;
+}
+
+static void latch_hid(DWORD len)
+{
+    if (g_hidKind == HID_SWITCH) latch_switch(len);
+    else                         latch_ds4(len);
+}
+
+static void close_hid(const char* why)
+{
+    CancelIo(g_hid);
+    CloseHandle(g_hid);
+    g_hid = INVALID_HANDLE_VALUE; g_readPending = false;
+    shim_log("pad: %s closed (%s)", hid_name(g_hidKind), why);
 }
 
 // Non-blocking overlapped pump, under g_cs: drain finished reports, keep one read pending.
-static void pump_ds4(void)
+static void pump_hid(void)
 {
-    for (int guard = 0; guard < 16 && g_ds4 != INVALID_HANDLE_VALUE; ++guard) {
+    for (int guard = 0; guard < 16 && g_hid != INVALID_HANDLE_VALUE; ++guard) {
         if (g_readPending) {
             DWORD rd = 0;
-            if (!GetOverlappedResult(g_ds4, &g_ov, &rd, FALSE)) {
+            if (!GetOverlappedResult(g_hid, &g_ov, &rd, FALSE)) {
                 if (GetLastError() == ERROR_IO_INCOMPLETE) return;      // still waiting
-                close_ds4("read failed - unplugged?");
+                close_hid("read failed - unplugged?");
                 return;
             }
             g_readPending = false;
-            if (rd >= 10) latch_ds4(rd);
+            if (rd >= 10) latch_hid(rd);
         }
         ResetEvent(g_ev);
         DWORD rd = 0;
-        if (ReadFile(g_ds4, g_rpt, g_rptLen, &rd, &g_ov)) {
-            if (rd >= 10) latch_ds4(rd);        // completed at once; loop for a fresher one
+        if (ReadFile(g_hid, g_rpt, g_rptLen, &rd, &g_ov)) {
+            if (rd >= 10) latch_hid(rd);        // completed at once; loop for a fresher one
         } else if (GetLastError() == ERROR_IO_PENDING) {
             g_readPending = true;
             return;
         } else {
-            close_ds4("device gone");
+            close_hid("device gone");
             return;
         }
     }
@@ -281,13 +432,14 @@ static DWORD WINAPI discovery_thread(LPVOID)
                 }
             }
         }
-        if (g_xiSlot < 0 && g_ds4 == INVALID_HANDLE_VALUE) open_ds4();
+        if (g_xiSlot < 0 && g_hid == INVALID_HANDLE_VALUE) open_hid();
+        wheel_discover();                       // GvrIOWheel.cpp: a DirectInput steering wheel
         Sleep(1500);
     }
 }
 
-// Under g_cs. XInput first (an Xbox pad, or a PS pad that Steam Input presents as one),
-// then the raw-HID DS4.
+// Under g_cs. XInput first (an Xbox pad, or a pad that Steam Input presents as one),
+// then the raw-HID pad (DS4 or Switch Pro).
 static void read_pad(PadState* p)
 {
     memset(p, 0, sizeof *p);
@@ -318,11 +470,11 @@ static void read_pad(PadState* p)
         InterlockedExchange(&g_xiSlot, -1);    // unplugged: the discovery thread looks again
         shim_log("pad: Xbox controller disconnected");
     }
-    if (g_ds4 != INVALID_HANDLE_VALUE) {
-        pump_ds4();
-        if (g_ds4 != INVALID_HANDLE_VALUE) {
-            p->steer = g_ds4Steer; p->gas = g_ds4Gas; p->brake = g_ds4Brake;
-            p->rx = g_ds4Rx; p->ry = g_ds4Ry; p->btn = g_ds4Btn;
+    if (g_hid != INVALID_HANDLE_VALUE) {
+        pump_hid();
+        if (g_hid != INVALID_HANDLE_VALUE) {
+            p->steer = g_hidSteer; p->gas = g_hidGas; p->brake = g_hidBrake;
+            p->rx = g_hidRx; p->ry = g_hidRy; p->btn = g_hidBtn;
             p->present = true;
         }
     }
@@ -375,6 +527,10 @@ static const struct { const char* name; unsigned ub; } PAD_BUTTONS[] = {
     {"lb",UB_L1},{"rb",UB_R1},{"lt",UB_L2},{"rt",UB_R2},
     {"start",UB_OPTIONS},{"menu",UB_OPTIONS},{"back",UB_SHARE},{"view",UB_SHARE},
     {"ls",UB_L3},{"rs",UB_R3},{"guide",UB_PS},
+    // Nintendo Switch spellings. Its A/B/X/Y LETTERS sit in other places than the Xbox
+    // ones above, so a Switch pad is mapped by position names (cross = the bottom button).
+    {"l",UB_L1},{"r",UB_R1},{"zl",UB_L2},{"zr",UB_R2},{"minus",UB_SHARE},{"plus",UB_OPTIONS},
+    {"home",UB_PS},{"capture",UB_CAPTURE},
 };
 
 struct Bind { unsigned ub; const ActDef* act; };
@@ -411,6 +567,8 @@ static unsigned button_of(const char* name)
         if (_stricmp(PAD_BUTTONS[i].name, name) == 0) return PAD_BUTTONS[i].ub;
     return 0;
 }
+unsigned pad_button_bit(const char* name) { return button_of(name); }
+unsigned pad_hat_bits(int hat) { return hat_buttons(hat); }
 
 static void map_defaults(void)
 {
@@ -485,6 +643,14 @@ static void load_config(void)
         char* act = eq + 1;
         char* cmt = strpbrk(act, ";#");
         if (cmt) *cmt = 0;
+        if (m == &g_race && _stricmp(btn, "Pedals") == 0) {
+            act = trim(act);
+            g_pedalsStick = _stricmp(act, "rightstick") == 0;
+            if (!g_pedalsStick && _stricmp(act, "triggers") != 0)
+                shim_log("pad cfg: [Controller] Pedals = '%s' - use triggers or rightstick", act);
+            ++applied;
+            continue;
+        }
         unsigned ub = button_of(btn);
         if (!ub) { shim_log("pad cfg: [%s] unknown button '%s' - ignored", m->section, btn); continue; }
         map_clear(*m, ub);
@@ -509,7 +675,7 @@ static void log_map(const PadMap& m)
         _snprintf(buf + len, sizeof buf - len, "%s=%s ", bn, m.b[i].act->name);
         buf[sizeof buf - 1] = 0;
     }
-    shim_log("pad map [%s]: %s", m.section, buf);
+    shim_log("pad map [%s]: %s%s", m.section, buf, g_pedalsStick ? "(pedals on the right stick)" : "");
 }
 
 static void pad_start(void)
@@ -534,6 +700,17 @@ static PadState pad_get(void)
     read_pad(&g_pad);
     p = g_pad;
     LeaveCriticalSection(&g_cs);
+    // A steering wheel (GvrIOWheel.cpp) drives steering and the pedals; its buttons add to a pad's.
+    int ws, wg, wb; unsigned wbtn;
+    if (wheel_read(&ws, &wg, &wb, &wbtn)) {
+        p.steer = ws; p.gas = wg; p.brake = wb; p.btn |= wbtn; p.present = true;
+    }
+    if (g_pedalsStick && p.present) {
+        int up = p.ry > 0 ? p.ry * 2 : 0, down = p.ry < 0 ? -p.ry * 2 : 0;   // 0..254
+        if (up > p.gas)     p.gas = up;
+        if (down > p.brake) p.brake = down;
+        p.ry = 0;                                 // not the camera any more
+    }
     return p;
 }
 
@@ -692,8 +869,12 @@ static bool patch_vtable_slot(void** vt, int slot, void* hook, void** orig)
 static HRESULT STDMETHODCALLTYPE hook_GetDeviceState(void* self, DWORD cb, LPVOID data)
 {
     HRESULT hr = g_realGetDeviceState(self, cb, data);
-    // A failed read (window not in front, keyboard not acquired) stays untouched.
-    if (SUCCEEDED(hr) && data && cb >= 256) {
+    // Our own wheel shares these vtables: never write keys into its DIJOYSTATE2.
+    if (wheel_owns(self)) return hr;
+    // A failed read (window not in front, keyboard not acquired) stays untouched. Keyboards
+    // only (exactly 256 bytes): OEM Steering.dll reads its wheel through these same vtables
+    // with a 272-byte DIJOYSTATE2, and the race keys must never land in a joystick's buttons.
+    if (SUCCEEDED(hr) && data && cb == 256) {
         if (in_set(g_gvrioKbd, self)) inject_keys((BYTE*)data);     // GvrIO: cabinet keys
         else if (!g_isShell)          inject_race_keys((BYTE*)data); // the race's own keyboard
     }
@@ -765,6 +946,7 @@ void pad_attach(HMODULE self, bool isShell)
     g_isShell = isShell;
     g_off = GetEnvironmentVariableA("GVRIOSHIM_NO_PAD", NULL, 0) > 0;
     InitializeCriticalSection(&g_cs);
+    wheel_attach();
 }
 
 void pad_hook_gvrio(HMODULE oem)

@@ -28,3 +28,8 @@ void shim_log(const char* fmt, ...);
 // GvrIOReg.cpp: answer HKLM\SOFTWARE\GlobalVR and \gvr from <install>\nascar_registry.ini.
 // Call from DllMain after pad_attach (it needs the install folder).
 void reg_attach(void);
+
+// For GvrIOWheel.cpp: a pad position name (cross, l1, dup, ...) -> its button bit (0 = unknown),
+// and a hat direction (0 = up, clockwise; 8 = centred) -> D-pad bits.
+unsigned pad_button_bit(const char* name);
+unsigned pad_hat_bits(int hat);

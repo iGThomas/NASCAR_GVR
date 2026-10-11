@@ -66,7 +66,7 @@ static void logf(const char* fmt, ...)
 
 static void die(const char* fmt, ...)
 {
-    char msg[1024];
+    char msg[4096];
     va_list ap; va_start(ap, fmt);
     vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
@@ -210,7 +210,7 @@ static void load_settings(Settings& s)
     s.waitForExit   = ini_bool("Launcher", "WaitForExit", true);
     s.extraArgs     = ini_str("Race", "ExtraArgs", "-noabort -notimeout");
     s.track         = ini_str("Race", "Track", "DAYTONA");
-    s.series        = ini_str("Race", "Series", "2006NEXTEL");
+    s.series        = ini_str("Race", "Series", "2005NEXTEL");
     s.car           = ini_int("Race", "Car", 10);
     s.laps          = ini_int("Race", "Laps", 3);
     for (size_t i = 0; i < s.mode.size(); i++) s.mode[i] = (char)tolower((unsigned char)s.mode[i]);
@@ -225,6 +225,30 @@ static std::string compose_cmd(const Settings& s)
     snprintf(buf, sizeof(buf), "-startPos 43 %s -width %d -height %d %s",
              s.fullscreen ? "-fullscreen" : "-windowed", s.width, s.height, s.extraArgs.c_str());
     return std::string(buf);
+}
+
+// The engine knows five series names (2006NEXTEL 2005NEXTEL 2004NEXTEL 2004NNS 2004CTS) but the
+// v1.1 disc ships a .gdb for only four - 2006NEXTEL fails the ENTER state and the race exits -1.
+// Older releases defaulted to it, and the installer keeps an existing nascar_settings.ini, so check
+// the series' file instead of trusting the setting: if it is missing, leave -series out and let the
+// game take its own default (2005NEXTEL). Names we cannot map are passed through unchanged.
+static bool series_installed(const std::string& series, const char* gameDir)
+{
+    if (series.empty()) return false;
+    const char* n = series.c_str();
+    const char* kinds[3][2] = { { "NEXTEL", "NEXTEL Cup" }, { "NNS", "NNS" }, { "CTS", "CTS" } };
+    if (strlen(n) > 4 && isdigit((unsigned char)n[0]) && isdigit((unsigned char)n[3])) {
+        for (int i = 0; i < 3; i++) {
+            if (_stricmp(n + 4, kinds[i][0]) != 0) continue;
+            char gdb[MAX_PATH];
+            snprintf(gdb, sizeof(gdb), "%s\\GameData\\%.4s %s.gdb", gameDir, n, kinds[i][1]);
+            if (PathFileExistsA(gdb)) return true;
+            logf("series %s is not on this disc (no %s) - leaving -series out, the game picks its default",
+                 n, gdb);
+            return false;
+        }
+    }
+    return true;
 }
 
 // ---------------------------------------------------------------- the game's registry
@@ -345,22 +369,56 @@ static void give_focus(DWORD pid)
 }
 
 
-// The cabinet shell HIDES THE WINDOWS TASKBAR - the same lockdown behaviour as the
+// The cabinet shell can HIDE THE WINDOWS TASKBAR - the same lockdown behaviour as the
 // OEM's HideTaskBar.exe. If it exits without restoring it, or is killed, the desktop
 // is left with no taskbar at all. Put it back whenever we regain control.
-static void restore_taskbar(void)
+//
+// Only taskbars that were VISIBLE BEFORE WE LAUNCHED are ever re-shown. Windows keeps some
+// taskbar windows hidden on purpose (the one for a secondary or virtual monitor with
+// "show taskbar on all displays" off, e.g. Meta Quest Link's virtual monitor); forcing those
+// visible every poll made Explorer hide them again, four times a second - the taskbar
+// "freaking out" (BUGS.md #1).
+static const char* kTrayClasses[2] = { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" };
+static HWND g_trays[16];
+static int  g_trayRestores[16];
+static int  g_trayCount = 0;
+
+static void snapshot_taskbar(void)
 {
-    static const char* classes[2] = { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" };
-    static int restored = 0;
+    int hidden = 0;
+    g_trayCount = 0;
     for (int i = 0; i < 2; i++) {
         HWND h = NULL;
-        while ((h = FindWindowExA(NULL, h, classes[i], NULL)) != NULL) {
-            if (!IsWindowVisible(h)) {
-                ShowWindow(h, SW_SHOW);
-                if (restored++ < 5 || restored % 100 == 0)
-                    logf("restored the %s (the shell had hidden it) (%d)", classes[i], restored);
+        while ((h = FindWindowExA(NULL, h, kTrayClasses[i], NULL)) != NULL) {
+            if (!IsWindowVisible(h)) { hidden++; continue; }
+            if (g_trayCount < (int)(sizeof(g_trays) / sizeof(g_trays[0]))) {
+                g_trayRestores[g_trayCount] = 0;
+                g_trays[g_trayCount++] = h;
             }
         }
+    }
+    logf("taskbar: %d visible window(s) recorded, %d already hidden (left alone)", g_trayCount, hidden);
+}
+
+// The shell hides the taskbar once per session, so one restore is normal. A taskbar that is
+// hidden again every time we show it belongs to something else - a taskbar replacement such as
+// ExplorerPatcher or StartAllBack hides the real one, even on a single monitor (BUGS.md #1).
+// After kMaxTrayRestores we stop touching that window instead of fighting it.
+static const int kMaxTrayRestores = 3;
+
+static void restore_taskbar(void)
+{
+    for (int i = 0; i < g_trayCount; i++) {
+        HWND h = g_trays[i];
+        if (!IsWindow(h) || IsWindowVisible(h) || g_trayRestores[i] > kMaxTrayRestores) continue;
+        char cls[64] = "";
+        GetClassNameA(h, cls, sizeof(cls));
+        if (g_trayRestores[i]++ == kMaxTrayRestores) {
+            logf("taskbar: the %s keeps being hidden again (a taskbar tool?) - leaving it alone", cls);
+            continue;
+        }
+        ShowWindow(h, SW_SHOW);
+        logf("restored the %s (the shell had hidden it) (%d)", cls, g_trayRestores[i]);
     }
 }
 
@@ -509,6 +567,7 @@ static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, 
     std::string cmdline = std::string("\"") + exe + "\" " + args;
     STARTUPINFOA si = { sizeof(si) };
     PROCESS_INFORMATION pi = { 0 };
+    snapshot_taskbar();
     logf("launching: %s", cmdline.c_str());
     logf("  cwd: %s", cwd);
     if (!CreateProcessA(NULL, (LPSTR)cmdline.c_str(), NULL, NULL, FALSE,
@@ -537,6 +596,59 @@ static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, 
 }
 
 // ---------------------------------------------------------------- main
+
+// ---------------------------------------------------------------- install guard
+//
+// Antivirus (usually Windows Defender) can quarantine our DLLs after the install - they patch
+// code in memory and get preloaded into the front end. The game then hangs or exits with no
+// explanation, so check the files that matter before starting anything and name what is gone.
+static void check_install(const Settings& s)
+{
+    struct Need { const char* rel; const char* what; };
+    static const Need race[] = {
+        { "Game\\NASCAR_GVR.exe", "the race" },
+        { "Game\\GvrIO.dll",      "our GvrIO shim for the race (without it the race hangs at start)" },
+        { "Game\\GvrIO_oem.dll",  "the original GvrIO the shim forwards to" },
+    };
+    static const Need shell[] = {
+        { "Shell\\bin\\AMPlayer.exe",  "the arcade front end" },
+        { "Shell\\Shell.am",           "the front end's start scene" },
+        { "Shell\\bin\\GvrIO.dll",     "our GvrIO shim for the front end (without it the front end hangs)" },
+        { "Shell\\bin\\GvrIO_oem.dll", "the original GvrIO the shim forwards to" },
+        { "Shell\\bin\\Dongle.dll",    "the patched dongle check" },
+    };
+    static const Need sqlite[] = {          // the SQLite database route (default install)
+        { "Shell\\bin\\PLUSDE.dll",    "our database provider (patched to SQLite)" },
+        { "Shell\\bin\\GvrSqlite.dll", "our SQLite bridge" },
+        { "Shell\\bin\\sqlite3.dll",   "the SQLite engine" },
+    };
+    std::string missing;
+    int n = 0;
+    auto check = [&](const Need* list, size_t count) {
+        for (size_t i = 0; i < count; ++i) {
+            char p[MAX_PATH];
+            snprintf(p, sizeof(p), "%s\\%s", g_root, list[i].rel);
+            if (PathFileExistsA(p)) continue;
+            logf("install check: MISSING %s (%s)", list[i].rel, list[i].what);
+            missing += std::string("    ") + list[i].rel + "  - " + list[i].what + "\n";
+            ++n;
+        }
+    };
+    check(race, sizeof(race) / sizeof(race[0]));
+    if (s.mode != "race") {
+        check(shell, sizeof(shell) / sizeof(shell[0]));
+        char db[MAX_PATH];
+        snprintf(db, sizeof(db), "%s\\GVR\\GvrPlus\\game.db", g_root);
+        if (PathFileExistsA(db)) check(sqlite, sizeof(sqlite) / sizeof(sqlite[0]));
+    }
+    if (!n) { logf("install check: all files present"); return; }
+    die("NASCAR Team Racing cannot start: %d file(s) are missing from\n%s\n\n%s\n"
+        "The installer put them there, so your antivirus most likely removed them. It is a false "
+        "alarm: these small files let an arcade game run on a normal PC.\n\n"
+        "Restore them from Windows Security > Virus & threat protection > Protection history, "
+        "add this folder as an exclusion, and run Install.bat again to repair the install "
+        "(your settings are kept).", n, g_root, missing.c_str());
+}
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
 {
@@ -567,6 +679,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
 
     Settings s;
     load_settings(s);
+    check_install(s);
 
     apply_settings(s);
     ensure_anark_prefs();
@@ -583,9 +696,11 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     if (s.mode == "race") {
         // Straight into a session, bypassing the cabinet front end. Handy for
         // testing; the shell is the real experience.
+        std::string seriesArg;
+        if (series_installed(s.series, gameDir)) seriesArg = "-series " + s.series + " ";
         char args[1024];
-        snprintf(args, sizeof(args), "-mode single -track %s -series %s -car %d -laps %d %s -width %d -height %d %s",
-                 s.track.c_str(), s.series.c_str(), s.car, s.laps,
+        snprintf(args, sizeof(args), "-mode single -track %s %s-car %d -laps %d %s -width %d -height %d %s",
+                 s.track.c_str(), seriesArg.c_str(), s.car, s.laps,
                  s.fullscreen ? "-fullscreen" : "-windowed", s.width, s.height, s.extraArgs.c_str());
         if (!PathFileExistsA(gameExe)) die("NASCAR_GVR.exe was not found:\n%s", gameExe);
         run(gameExe, args, gameDir, s.waitForExit || s.borderless, s);

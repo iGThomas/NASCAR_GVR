@@ -33,26 +33,42 @@ Your PC stays a normal PC: no shell replacement, no autostart, no reboot.
    it is missing. It takes a few minutes and tells you when it is done.
 5. Start **NASCAR Team Racing** from the desktop shortcut.
 
+> **Antivirus warning?** Add the install folder as an exclusion (Windows Security → Virus & threat
+> protection → Manage settings → Exclusions → Add a folder), and restore `GvrIO.dll` if it was
+> quarantined (if `NascarLaunch.exe` vanished, unzip again and re-run `Install.bat`). This is a false alarm: to run an arcade game on a normal PC, our small DLLs step in
+> between the game and Windows, and antivirus programs flag that kind of behaviour by default.
+
 Screen size, fullscreen and the controller map are in `nascar_settings.ini` in the install
 folder. Advanced: the installer still takes command-line options, e.g.
 `Install.bat -Width 1920 -Height 1080` from an Administrator window.
 
 ### Controls
 
-| | Keyboard | Xbox | PlayStation |
-|---|---|---|---|
-| Steer | `D` / `G` | left stick | left stick |
-| Gas / brake | `R` / `C` | RT / LT | R2 / L2 |
-| Menus: select / back | `S` / `L` | A / B | Cross / Circle |
-| Menus: up / down | `V` / `M` | D-pad | D-pad |
-| Race: start (puts the car back on the track) | `S` | Menu | Options |
-| Change view / look back | `V` / `L` | RB / LB | R1 / L1 |
-| Turn the chase camera | numpad 4 6 8 2 | right stick | right stick |
-| Horn | `J` | B | Circle |
-| Gears (manual transmission) | `T` `Y` `U` `I` = gears 1–4 | X / Y = up / down | Square / Triangle = up / down |
-| Music | `M` | D-pad right | D-pad right |
-| Quit the race | hold `V` `L` `S` `M` together | hold D-pad down | hold D-pad down |
-| Operator menu | `O` | Menu (in the menus) | Options (in the menus) |
+| | Keyboard | Xbox | PlayStation | Switch Pro |
+|---|---|---|---|---|
+| Steer | `D` / `G` | left stick | left stick | left stick |
+| Gas / brake | `R` / `C` | RT / LT | R2 / L2 | ZR / ZL (on/off) |
+| Menus: select / back | `S` / `L` | A / B | Cross / Circle | B / A |
+| Menus: up / down | `V` / `M` | D-pad | D-pad | D-pad |
+| Race: start (puts the car back on the track) | `S` | Menu | Options | + |
+| Change view / look back | `V` / `L` | RB / LB | R1 / L1 | R / L |
+| Turn the chase camera | numpad 4 6 8 2 | right stick | right stick | right stick |
+| Horn | `J` | B | Circle | A |
+| Gears (manual transmission) | `T` `Y` `U` `I` = gears 1–4 | X / Y = up / down | Square / Triangle = up / down | Y / X = up / down |
+| Music | `M` | D-pad right | D-pad right | D-pad right |
+| Quit the race | hold `V` `L` `S` `M` together | hold D-pad down | hold D-pad down | hold D-pad down |
+| Operator menu | `O` | Menu (in the menus) | Options (in the menus) | + (in the menus) |
+
+**Switch Pro Controller (new, not yet tested on real hardware):** USB or Bluetooth. Buttons follow the same
+*positions* as the other pads, so A and B are swapped compared with Switch games. ZL / ZR are on/off; for
+analog gas and brake set `Pedals = rightstick` under `[Controller]` in `nascar_settings.ini`
+(right stick up = gas, down = brake). Steam can also present the pad as an Xbox controller.
+
+**Steering wheels (new, not yet tested on real hardware):** a Logitech Driving Force GT, and most
+other wheels Windows lists as a driving device, drive with their wheel and pedals. Force feedback is
+the arcade's own (centring, damping, grass and rumble-strip vibration, collision jolts). Install
+Logitech G HUB for a Logitech wheel. Settings are under `[Wheel]` in `nascar_settings.ini`;
+with `[Debug] Log=true` the log names the wheel and every button number it reports.
 
 Every control, and how to remap the pad: [docs/findings/NASCAR_CONTROLS.md](docs/findings/NASCAR_CONTROLS.md).
 
