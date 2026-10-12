@@ -22,7 +22,7 @@ struct PrivRegConfig {
     const PrivRegDefault* defaults;
     int                   nDefaults;
     bool                  allKeysExist;  // true: any key under a root opens (NASCAR);
-                                         // false: only keys in the store / defaults (NFSU)
+                                         // false: only keys in the store / defaults
     bool                  noSeed;        // true: never copy the real registry into a new store
                                          //   (its shared keys hold the other title's values)
 };

@@ -43,8 +43,8 @@ try {
         if ($LASTEXITCODE -ne 0) { throw "compile failed ($LASTEXITCODE)" }
         Write-Host ""
         # Point the provider at the test copy. GVRSQLITE_DB may already be set
-        # machine-wide by an NFSU install; the per-title variable wins over it,
-        # which is exactly the coexistence behaviour we want to test.
+        # machine-wide by another GVR title's install; the per-title variable wins
+        # over it, which is exactly the coexistence behaviour under test.
         $env:GVRSQLITE_DB_NAS1 = (Join-Path $tmp "game.db")
         & (Join-Path $tmp "test.exe") (Join-Path $tmp "game.db")
         $rc = $LASTEXITCODE

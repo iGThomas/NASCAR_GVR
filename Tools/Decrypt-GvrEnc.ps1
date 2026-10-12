@@ -2,11 +2,11 @@
 # Decrypt-GvrEnc.ps1
 #
 # Decrypts GlobalVR GvrPlus ".enc" schema files (Base64 + AES-128-CBC,
-# PKCS#7). Same key/IV as the NFSU cabinet -- GlobalVR reused the
-# GvrPlus crypto across titles, verified against NASCAR 2008 media.
+# PKCS#7). GlobalVR reused the GvrPlus key/IV across titles; verified
+# against NASCAR 2008 media.
 #
 # The key and IV are derived by the same rolling-XOR the GvrPeUtil
-# CryptoUtils code uses (see GIT\decrypt_gvr.py in the parent project).
+# CryptoUtils code uses.
 #
 #   .\Decrypt-GvrEnc.ps1 NASCARcabinet.enc NASCARcabinet.txt
 #   .\Decrypt-GvrEnc.ps1 -InputPath .\schema -OutputPath .\out   # whole folder

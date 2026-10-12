@@ -1,7 +1,7 @@
-# What the OEM NASCAR installer does — and what we refuse to do
+# What the OEM NASCAR installer does — and what this install refuses to do
 
-Same analysis as `GAME_ONLY_INSTALL_ANALYSIS.md` in the parent project, for the NASCAR
-cabinet media. Source: `GAME ISO EXTRACTED\GVRSETUP.INI`, `Setup.ini`, `setup.inx`
+What the original cabinet installer on the NASCAR media does, and which parts of it the
+game-only install leaves out. Source: `GAME ISO EXTRACTED\GVRSETUP.INI`, `Setup.ini`, `setup.inx`
 strings, `Registry\*.reg`, `Config\*.bat`, `CloseApps\*`.
 
 ---
@@ -12,7 +12,7 @@ strings, `Registry\*.reg`, `Config\*.bat`, `CloseApps\*`.
 
 1. **Checks `RUNTIMEOEMREV`** — the XP-Embedded revision string under
    `HKLM\System\CurrentControlSet\Control\Session Manager\Environment`. Ordinary Windows
-   does not have it, so the OEM installer stops. (Same gate as the NFSU discs.)
+   does not have it, so the OEM installer stops.
 2. **Checks `[GAMEINSTALLED]`** — `C:\NASCAR\Game\NASCAR_GVR.exe`.
 3. **Checks `[MINIMUMOS]`** — OSName `NASCAR`, OSDate `20070115`, OSVersion `1.0.0`, i.e. it
    expects to be running on a cabinet restored from a GVR recovery disc.
@@ -27,7 +27,7 @@ strings, `Registry\*.reg`, `Config\*.bat`, `CloseApps\*`.
 | 0 | `wscript Config\Shortcut.wsf` — creates Start-menu `gvrShutdown.lnk` (Close Apps) and `gvrStartup.lnk` (`GVRBoot.exe`), **and** the All Users **Startup** autostarts `LoadingShell.lnk` and `HideTaskbar.lnk` | cabinet autostart + operator tooling — **skip** |
 | 1 | `C:\GVR\GVR_Tools\SetVolume.exe 50` — forces system mixer volume | **skip** (changes the machine's audio) |
 | 2 | `Config\nascarfw.exe` — wraps `gvrNetworkConfig.bat` | **skip** (see below) |
-| 3 | `rundll32 NvCpl.dll,dtcfg setdvc all 20` — NVIDIA Digital Vibrance | **skip** (needs legacy NvCpl; the NFSU work already showed this popup path is a nuisance) |
+| 3 | `rundll32 NvCpl.dll,dtcfg setdvc all 20` — NVIDIA Digital Vibrance | **skip** (needs legacy NvCpl; on a PC without it this path only produces a RunDLL error popup) |
 | 4 | `msiexec /i DbSetup\PGA.msi /quiet` — installs the GvrPlus database component | optional, `-InstallGvrPlus` only |
 | 5 | `pathman.exe /as C:\NASCAR\SHELL\BIN` — appends to the **machine** PATH | **skip by default** (`-AddShellBinToPath` to opt in) |
 | 6 | `DbSetup\Nascar_db.exe` in `C:\GvrPlus\4\schema\game` — loads schema/pricing tables | optional, shell-only |
@@ -45,7 +45,7 @@ ports yourself — they are documented here so you don't have to dig them out ag
 
 ---
 
-## 2. Registry payloads we never import
+## 2. Registry payloads never imported
 
 | File | Why it is refused |
 |---|---|
@@ -56,7 +56,7 @@ ports yourself — they are documented here so you don't have to dig them out ag
 | HKCU cursor block inside `NASCAR.reg` | Replaces the machine's mouse cursor scheme with `GvrCurs` cabinet cursors. Cosmetic, global, and annoying to undo — opt-in via `-InstallCabinetCursors`. |
 | `Schema.reg` `WebServerIP=192.168.1.39` | A GlobalVR dev-network address. Meaningless outside their LAN. |
 
-## 3. Cabinet behaviours that simply do not exist in our install
+## 3. Cabinet behaviours that simply do not exist in this install
 
 * No shell replacement, no `HideTaskBar.exe`, no `GammaSet.exe`, no forced display mode
   (`sv1360x768x32x60.exe` / `SetVRes.exe` ship on the disc but are never invoked).
@@ -69,7 +69,7 @@ ports yourself — they are documented here so you don't have to dig them out ag
   import of `GvrIO.dll` from `Shell\bin` — is solved by copying the GvrIO DLL set next to
   the executable instead.
 
-## 4. What our installer does instead
+## 4. What the installer does instead
 
 1. Copy `NASCAR\Game` and (optionally) `NASCAR\Shell` under a chosen install root.
 2. Copy the GvrIO plug-in set (`GvrIO`, `USBIOExtreme`, `GvrParseXml`, `GvrSound`,

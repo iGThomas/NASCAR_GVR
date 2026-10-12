@@ -1,7 +1,7 @@
 # NASCAR Team Racing (GlobalVR) — reverse-engineering findings
 
-Companion to the parent project's `REVERSE_ENGINEERING_FINDINGS.md`, but for the NASCAR
-cabinet. Everything below was verified against the extracted media on 2026-08-12 unless
+How the NASCAR cabinet software works internally, and what it takes to run it on a normal PC.
+Everything below was verified against the extracted media on 2026-08-12 unless
 marked *(inferred)*.
 
 ---
@@ -18,11 +18,11 @@ InstallShield 12 OEM installer.
 | ProductGUID | `70AA52E7-89A2-428E-8C92-3ABC73B83F04` |
 | Payload | `data1.hdr` + `data1.cab` + `data2.cab` (646 MB) |
 | Extracted | 4,914 files, ~800 MB |
-| Extractor | the project's `release\Tools\unshield.exe` handles it directly |
+| Extractor | `Tools\unshield.exe` handles it directly |
 | Author string in `setup.inx` | `C:\Projects\NASCAR\SETUP\Installer\Script Files\Setup.dbg` |
 
-`setup.inx` still contains the `RUNTIMEOEMREV` string — the same XP-Embedded gate the NFSU
-discs use, so the OEM installer refuses to run on ordinary Windows. **The game executable
+`setup.inx` still contains the `RUNTIMEOEMREV` string — GlobalVR's XP-Embedded gate, so the
+OEM installer refuses to run on ordinary Windows. **The game executable
 itself does not check it** (no such string in `NASCAR_GVR.exe`), which is why a
 file-copy installer works.
 
@@ -83,7 +83,7 @@ drivers (NVIDIA, HASP, Intel LAN, C-Media).
 ## 2. Payload → install layout
 
 The **cabinet's** layout is unambiguous — it is pinned by the OEM registry files and
-`GVRSETUP.INI`, not guessed. (Our installer does **not** reproduce these paths: it nests
+`GVRSETUP.INI`, not guessed. (The portable installer does **not** reproduce these paths: it nests
 everything under a folder you choose and repoints the registry accordingly — see the
 README. The table below is what the OEM installer would have done.)
 
@@ -130,7 +130,7 @@ motionLib.dll  : cbw32 (Measurement Computing InstaCal — motion base only)
 
 **Key result: the game executable has no SQL, no .NET, no PLUSDE, no GvrPlus dependency.**
 The database exists for the shell's accounting/leaderboards. A game-only install therefore
-does not need MSDE at all — a much shorter path than NFSU took.
+does not need MSDE at all.
 
 ### Hardcoded paths
 
@@ -168,8 +168,8 @@ Series: `2006NEXTEL`, `2005NEXTEL`, `2004NEXTEL`, `2004NNS`, `2004CTS`.
 
 ## 4. GvrIO — the hardware layer (and the plug-in ABI)
 
-`GvrIO.dll` is the NASCAR-era equivalent of NFSU's `GVRInputRaw.dll`, but cleaner: an
-11-export C++ class plus a **plug-in loader**.
+`GvrIO.dll` is GlobalVR's cabinet input/output layer: an 11-export C++ class plus a
+**plug-in loader**.
 
 ```
 ?Initialize@cGvrIO@GvrIO@Zeus@Gvr@@…(GVR_DEVICE_TYPES, HWND, callback)
@@ -229,10 +229,10 @@ runtime pattern, matching `!Drivers\HASP\hdd32.exe` in the recovery image.
 
 **Attack point (not yet implemented):** replace `Dongle.dll` with a shim exporting
 `Initialize` / `MessageCallback` / `Finalize` that answers the dongle query with
-`game=NASCAR`, a valid version, region and cabinet type. This is the same shape as the
-NFSU `GVRInputRaw.dll` replacement, and the NFSU lesson applies directly: **forward the
-whole ABI to the original DLL renamed `Dongle_oem.dll` and only override the calls you
-mean to override** — stubbing everything is what produced the long idle hangs there.
+`game=NASCAR`, a valid version, region and cabinet type. The rule for such a shim:
+**forward the whole ABI to the original DLL renamed `Dongle_oem.dll` and only override the
+calls you mean to override** — stubbing everything leaves cabinet probes unanswered, which
+shows up as long idle hangs.
 
 What is still unknown: the `sMessage` layout and the message IDs used for the dongle
 query. That needs a Ghidra pass on `NASCAR_GVR.exe` + `Dongle.dll`.
@@ -247,14 +247,12 @@ from the extracted tree with the GvrIO + MSVC 7.1 DLLs staged beside it:
 * **never creates a window**, never writes any other file
 * main thread parks in `ExecutionDelay` (a `Sleep` retry loop)
 
-That is a *probe/retry stall*, not a crash — the same signature as the NFSU
-UniverShell2 hang that turned out to be cabinet hardware probes. Ranked suspects:
+That is a *probe/retry stall*, not a crash — the typical signature of cabinet hardware
+probes going unanswered. Ranked suspects:
 1. `Dongle.dll` retrying the HASP key (no driver, no key present),
 2. `GvrIO` failing to resolve `GameRoot` (registry keys were absent in this test — the
    installer writes them, so this needs re-testing after a real elevated install),
 3. the Nytric/`USBIOExtreme` board enumeration.
-
-Re-test order is in `NASCAR_PLAN.md`.
 
 ---
 
@@ -265,8 +263,7 @@ Re-test order is in `NASCAR_PLAN.md`.
 > wheel and pedals reach the race as GvrIO msg 5 axes and its buttons as GvrIO events; that is
 > also where the Xbox / PlayStation pad support plugs in. The `.CTL` keyboard lines still apply.
 
-Unlike NFSU (where analog steering needed a `GVRInputRaw.dll` replacement), NASCAR keeps
-EA's **data-driven** controls system. ~~Driving input goes through the game's own
+NASCAR keeps EA's **data-driven** controls system. ~~Driving input goes through the game's own
 `DINPUT8.dll` usage, not through GvrIO~~ — GvrIO carries the cabinet *buttons*
 (start/view/music/shifter/coin) **and** the analog wheel and pedal axes (§14.1).
 
@@ -328,16 +325,15 @@ verification results and known boundaries: **[`NASCAR_SQLITE.md`](NASCAR_SQLITE.
 
 Two NASCAR-specific notes worth carrying:
 
-* GlobalVR **reused the GvrPlus AES key/IV across titles**, so the NFSU `.enc` decryption
+* GlobalVR **reused the GvrPlus AES key/IV across titles**, so the same `.enc` decryption
   works unchanged on NASCAR's 2008 media.
-* The NFSU *artifacts* do not transfer — NASCAR ships a different `PLUSDE.dll`
-  (1,810,432 B vs 1,789,952 B) and calls four members NFSU's build never did
-  (`ExecuteScalar`, `CommandTimeout`, `SqlError.Message`, `SqlException.Message`). Only the
-  technique ports.
+* Patched binaries from other GVR titles do not transfer — NASCAR ships its own `PLUSDE.dll`
+  build (1,810,432 B), which also calls `ExecuteScalar`, `CommandTimeout`,
+  `SqlError.Message` and `SqlException.Message`; the provider implements all four.
 
 The alternative route, if you ever want the genuine article: MSDE 2000 (or SQL Express with
-the connection string in `NASCARcabinetXml.enc` re-encrypted, the way
-`Repoint-GvrConnectionString.ps1` does for NFSU) + `PGA.msi` + `Nascar_db.exe`.
+the connection string in `NASCARcabinetXml.enc` re-encrypted with the same AES key/IV) +
+`PGA.msi` + `Nascar_db.exe`.
 
 ## 6. Registry map
 
@@ -356,12 +352,12 @@ touches it:
 | `ConfigEventLog.reg` | zeroes event-log retention on all three logs | **Never** |
 | `tsunami.reg` | Tsunami motion base (`motionLib.dll`, `MotionType=4`) | **Never** — needs `cbw32.dll`/InstaCal hardware |
 
-Note `FullScreenWidth=1360`/`FullScreenHeight=768`: unlike NFSU (where resolution is
-hardcoded in the EXE and needed byte patches), **NASCAR takes its resolution from the
-registry and the command line**. No patching required for widescreen.
+Note `FullScreenWidth=1360`/`FullScreenHeight=768`: **NASCAR takes its resolution from the
+registry and the command line**, not from constants in the EXE. No patching required for
+widescreen.
 
 On x64 Windows the 32-bit game reads `HKLM\SOFTWARE\WOW6432Node\…`; the installer writes
-both views, the same lesson as `win11-x64-support` in the NFSU work.
+both views.
 
 The cabinet-OS half of the registry — the OEM-revision gate, autologon, the GVR autostart
 entries and the Aladdin HASP driver services — is documented separately in
@@ -373,9 +369,8 @@ with `Tools\Dump-Hive.py`.
 ## 7. The shell and the database (context, not required for the game)
 
 * Shell = **Anark Media Player** (`AMPlayer.exe` + `AKPlu*.dll` plug-ins) running
-  `Shell\shell.am`, `NASCAR_Attract.am`, `NASCAR_Selection.am` — a completely different
-  technology from NFSU's UniverShell2, so none of the `.gvr`/GVRD/script-VM work from the
-  parent project applies here.
+  `Shell\shell.am`, `NASCAR_Attract.am`, `NASCAR_Selection.am` — Anark scenes, not
+  GlobalVR's UniverShell2 `.gvr` format.
 * `Game\config\GvrShellPlugInList.xml` lists the shell's plug-ins: `ZeusIOPlugIn`,
   `HerculesPlugIn`, `GvrDiagnosticsPlugIn`, `NASCARPlugIn`, `GvrMusicPlugIn`,
   `GvrDirtyWordPlugIn`, `GvrPlusDEPlugin`, `GvrLinkingPlugIn`, `GvrMotionPlugIn`.
@@ -384,24 +379,20 @@ with `Tools\Dump-Hive.py`.
   `C:\GvrPlus\4\schema\game`, which loads the `.tbl`/`.sql` files shipped there
   (`a+PricingConfiguration.tbl`, `NascarLeaderboard.sql`, `adminplus.sql`, …).
 * The encrypted connection string lives at `C:\GvrPlus\4\schema\NASCARcabinetXml.enc` —
-  the direct analogue of NFSU's `nfscabinetXml.enc`, which we know is AES-128 and
-  re-encryptable (see `db-connstring-reencryptable` findings in the parent project).
+  AES-128 like the other GvrPlus `.enc` files, and re-encryptable with the same key/IV.
 
-### Relationship to the NFSU stack
+### GlobalVR platform DLLs on the NASCAR media
 
-Shared DLL *names*, different builds — every common file differs byte-for-byte from the
-NFSU copies (NASCAR is 2008, NFSU is 2005):
+The GlobalVR platform DLLs ship in NASCAR's own 2008 builds; anything patched (such as
+`PLUSDE.dll`) is derived from these exact files:
 
-| DLL | NASCAR | NFSU | Same file? |
-|---|---|---|---|
-| `PLUSDE.dll` | 1,810,432 B | 1,789,952 B | no |
-| `GVRStorageDevice.dll` / `DongleStorageDevice.dll` / `GVRSDEmulator.dll` / `GVRSCR28.dll` / `PCSCSCR2.dll` | present | present | no |
-| `GVRInputRaw.dll` | 106,496 B | 53,248 B | no |
+| DLL | NASCAR |
+|---|---|
+| `PLUSDE.dll` | 1,810,432 B |
+| `GVRStorageDevice.dll` / `DongleStorageDevice.dll` / `GVRSDEmulator.dll` / `GVRSCR28.dll` / `PCSCSCR2.dll` | present |
+| `GVRInputRaw.dll` | 106,496 B |
 
-So the **techniques** port (PLUSDE→SQLite shim, ABI forwarding, minimal registry), but not
-the patched binaries — anything derived from NFSU's `PLUSDE.dll` must be re-derived here.
-
-NASCAR-only additions: `akshasp.dll`, `haspms32.dll` (HASP), `MFC71.dll`, `msvcr70.dll`,
+Also on the NASCAR media: `akshasp.dll`, `haspms32.dll` (HASP), `MFC71.dll`, `msvcr70.dll`,
 `UsbTrackerDll.dll`, `MdmXSdk.dll`, `csamsp.dll`, `GVR_Resources.dll`, `PATHMAN.EXE`.
 
 ---
@@ -557,7 +548,7 @@ space cannot be passed — `-series "2005 NEXTEL Cup"` is received as `'"2005'` 
 ("not a valid series name"). `2005 NEXTEL Cup.gdb` carries `Series Default Filename = true`,
 so omit `-series` and let it default.
 
-Confirmed-playable launch (user-verified, full race at Daytona):
+Confirmed-playable launch (verified with a full race at Daytona):
 
     NASCAR_GVR.exe -track Daytona -startPos 43
 
@@ -792,7 +783,7 @@ every device-level fix was downstream of the real decision.
 
 ### 10.3 Everything that was eliminated, and why
 
-Each ruled out one hypothesis; the method matters for whoever picks this up:
+Each ruled out one hypothesis:
 
 | Attempt | Result | What it proved |
 |---|---|---|
@@ -809,8 +800,7 @@ Each ruled out one hypothesis; the method matters for whoever picks this up:
 `GetMemObject("Header.GameName")` needs the field `Header.GameName`, which is defined **nowhere**
 on a dongle-less cabinet: the only file in the whole install containing that string is
 `GvrPlusDEPlugin.dll` itself (the literal it passes). Its definition lives on the real dongle's
-own header. NFSU's `PlusData.gvr` defines `Header.PlayerInfo.*` but not `Header.GameName` either.
-So the fields the self-test prints (`GameName`, `Version`, `Region`) come off the dongle, and
+own header. So the fields the self-test prints (`GameName`, `Version`, `Region`) come off the dongle, and
 without one they are simply not present.
 
 ### 10.5 Corroboration from an external source
@@ -836,18 +826,18 @@ That is the data a content-reconstruction fix must reproduce.
 * `GvrSqlite.cs` log path fixed: honours `GVRSQLITE_LOG` as a path, defaults to `%TEMP%`
   (was a hardcoded `C:\gvrsqlite.log` that failed silently without admin — a real bug).
 
-### 10.7 Current state / next
+### 10.7 State at the end of this attempt
 
-Two routes remain (see NASCAR_PLAN.md dated entry):
+Two routes remained:
 1. continue patching the `PLUSDE` chain from `DongleInserted` upward (risk: PLUSDE is the shared
    DB core; unknown how many layers);
 2. **content reconstruction** — build a `Header.*` image the UNPATCHED `DongleInserted`/`ReadHeader`
-   accept, served by our `GVRSCR28.dll`, so the self-test passes on data rather than on removed
+   accept, served by the software `GVRSCR28.dll`, so the self-test passes on data rather than on removed
    checks. Preferred: real dongle contents satisfy every check at once. Needs the header
    layout/schema (the ABI report flags this as not yet recovered).
 
-Install currently has: patched `GvrPlusDEPlugin.dll` (OEM at `_oem`), software `GVRSCR28.dll` +
-`PCSCSCR2.dll` (OEMs at `_oem`). None of these is load-bearing yet; all are reversible.
+The install at that point had: patched `GvrPlusDEPlugin.dll` (OEM at `_oem`), software `GVRSCR28.dll` +
+`PCSCSCR2.dll` (OEMs at `_oem`). None of these was load-bearing; all are reversible.
 
 > **Superseded by section 11.** Section 10's conclusion that the gate sits "upstream of the
 > device" was wrong: the shell's self-test never uses the PLUSDE path at all.
@@ -858,9 +848,9 @@ Install currently has: patched `GvrPlusDEPlugin.dll` (OEM at `_oem`), software `
 
 Starting from "DONGLE MISSING OR INVALID", the shell now passes every power-on check, loads
 `NASCAR_Attract.am` ("NASCAR Start Your Engines"), `NASCAR_Selection.am` and the operator menu
-(user-confirmed). Each blocker in order, with the fix that is now on disk in `D:\Games\NASCAR`.
+(confirmed in play). Each blocker in order, with its fix.
 
-### 11.1 How to see what the shell is doing (read this first next time)
+### 11.1 How to see what the shell is doing (read this first)
 
 * **The scene scripts are readable.** Every `.am` embeds its JavaScript behaviours as **zlib
   streams** (`78 9C` / `78 DA`). `Tools\Extract-AmScripts.py <file.am>` inflates them all; then
@@ -956,15 +946,15 @@ test, in the VirtualStore copy. After one good pass the shell maintains them its
   `rundll32 nvcpl.dll,dtcfg setmode 1 <w> <h> 32 60` (frame 1 also runs `setmode 1 800 600`).
   Modern NVIDIA drivers reject `dtcfg` (result 8, desktop unchanged on an RTX 3060 laptop); old
   ones would obey. Case 11 also writes `FullScreenWidth/Height` (1360×768 here).
-  **Fixed 2026-10-05 (installer 4.2, release 1.0.2):** a user's PC with no 32-bit `nvcpl.dll`
-  showed Windows' "RunDLL: There was a problem starting nvcpl.dll" box on every start (the dev
-  PC has one, so it never appeared there). Both `Gvr.Launch("rundll32 nvcpl.dll,…")` statements
+  **Fixed 2026-10-05 (installer 4.2, release 1.0.2):** a PC with no 32-bit `nvcpl.dll`
+  showed Windows' "RunDLL: There was a problem starting nvcpl.dll" box on every start (a PC that
+  has one never shows it). Both `Gvr.Launch("rundll32 nvcpl.dll,…")` statements
   in `Shell.am` `Behavior95` (record `0x28867`, script lines 36 and 308) are now `;`, via
   `Tools\Edit-AmScript.py` with the compressed size kept; the patch table carries it.
   `Tools\Test-BytePatches.py` checks that the table reproduces a working install exactly.
 * Case 4 launches **`Shell\GammaSet.exe -gammasetting 3 -digitalvibrance 15`**; a 32-bit
   `NvCpl.dll` existed on the dev host, so it can really act. **Fix:** rename to
-  `GammaSet.exe.arcade-disabled`, as NFSU's `Disable-GammaSet` does.
+  `GammaSet.exe.arcade-disabled` (the installer's `Disable-GammaSet`).
 
 Both one-byte patches are applied to `Shell\bin\plugins\NASCARPlugIn.dll`; the OEM is kept as
 `NASCARPlugIn_oem.dll`.
@@ -1025,15 +1015,15 @@ mutex waits). This is the third byte patch in `NASCARPlugIn.dll`.
 ### 11.8 Still open
 
 * ~~`NASCAR_Selection.am` loads `c:\NASCAR\Shell\...` by absolute cabinet path~~ — fixed, section 12.
-* Starting a race from the shell works (user-confirmed: a full race at 23:38–23:43 ended in
+* Starting a race from the shell works (confirmed: a full race at 23:38–23:43 ended in
   `~ fini ~` and returned to the shell); it was simply reached via the car-select timeout.
-* None of 11.2–11.6 is in `Install-NASCAR-GVR-Portable.ps1` yet.
+* 11.2–11.6 are applied by `Install-NASCAR-GVR-Portable.ps1`.
 
 ---
 
 ## 12. Operator menus and car select (2026-10-04)
 
-User-confirmed end state: operator Info loads ("Region: United States", IO Board 3.03), and car
+End state (confirmed in play): operator Info loads ("Region: United States", IO Board 3.03), and car
 select shows the drivers. Three separate defects stacked on the car-select screen; each was
 invisible until the one before it was fixed.
 
@@ -1069,7 +1059,7 @@ Start `S` = select, Look Back `L` = back.
 `NASCAR_Selection.am` slides: `SelectDriver` → `WipeEnd` → `SelectTransmission` → `SelectTrack`
 → `Lobby` → `LoadGame`. "Start Your Engines" with an empty white bar **is** `SelectDriver`: the
 bar is where the driver-name image slides in, and a 3D car slides in over the background. The
-`Timeout` behaviour picks a car after 24 s, which is why the user only ever chose a transmission.
+`Timeout` behaviour picks a car after 24 s, which is why only the transmission ever seemed selectable.
 `DriverSelect_Behavior` steers with `Gvr.AxisX` (wheel) and selects with the gas pedal
 (`Gvr.AxisY`) or Start.
 
@@ -1136,7 +1126,7 @@ JS backslashes as escapes (that bug produced `..Textures`).
 
 ### 12.6 Still open
 
-* ~~Track select is skipped; every race is Daytona~~ — **RESOLVED 2026-10-04 (user-confirmed:
+* ~~Track select is skipped; every race is Daytona~~ — **RESOLVED 2026-10-04 (confirmed:
   tracks selectable, a race logged on a second track in `TrackStats_NAS1`).**
   `TrackSelect_Behavior` (frame 5) calls `trackSelectedByOther()` — auto-pick, no screen — when
   `tracksEnabledCount <= 1`. `Globals` builds that count from
@@ -1145,30 +1135,30 @@ JS backslashes as escapes (that bug produced `..Textures`).
   `(cabConfigInt(0x1E) & bitTable[i]) > 0` — **despite the name, a set bit = track AVAILABLE**.
   Config int 30 **is** `CabinetConfiguration_NAS1.TracksDisabled`, which the OEM row ships as 0
   (= no tracks). Bit tables: country ≠ "XX" → `0x10096848` = {1, 2, 4, 0x10, 0x20, 0xFFFFFFFF};
-  "XX" → `0x10096830` = {1, 2, 4, 8, 0x10, 0x20}; **63 (0x3F) enables all six**. The user set it
+  "XX" → `0x10096830` = {1, 2, 4, 8, 0x10, 0x20}; **63 (0x3F) enables all six**. It can be set
   through **Operator → Game Settings → Disable Tracks**; `Build-NascarSqliteDb.py` now provisions
   63. (A first attempt that set the column directly was wrongly recorded as "no effect": that
   test run went into the operator menu and never reached track select, and the value was then
   reverted.) With 63 the Disable Tracks screen builds normally — six names, six `GET_VALUE` = 1.
 * The Disable Tracks screen "froze" once while the value was 0 (menu beeps, screen stopped);
-  not reproduced since and the user has used it successfully. Its table
+  not reproduced since, and the screen has worked normally after that. Its table
   (`TracksDisabledCol.xml`) uses only `NASCARPlugIn` methods.
 * **"Game Crashed" after a race = `Result_Status` 0.** `Launch_Game.am` maps 0 → "Game Crashed",
   1 → finished, 2 → timed out; the game writes 0 for any unfinished race. `trace014.txt`: race
   reached `INGAME` at 7.15 s, then `#### ESCAPEREQUESTED ####` and a clean `~ fini ~` — an abort,
-  not a crash. Source of the escape unconfirmed (user Esc/Q?). The shell's own command line:
+  not a crash. Source of the escape unconfirmed (possibly an Esc/Q key press). The shell's own command line:
   `-track DAYTONA -car 20 -mode SINGLE -racelength 0 -nofe -series 2005NEXTEL -handling 0`, to which
   the registry `cmd` is appended.
-* Keyboard steering in car select is wired (axis 0 is now queried and answered) and the user
-  scrolled drivers/transmissions with it (`onSelectionChanged` events in the capture).
+* Keyboard steering in car select is wired (axis 0 is now queried and answered) and scrolls
+  drivers/transmissions (`onSelectionChanged` events in the capture).
 * `MotionForce` dropdown (12.2) and the unused-screen calls listed in 12.1.
-* Everything in sections 11–12 still has to go into `Install-NASCAR-GVR-Portable.ps1`.
+* The fixes in sections 11–12 are applied by `Install-NASCAR-GVR-Portable.ps1`.
 
 ---
 
 ## 13. Display: resolution limit, borderless, always-on-top, taskbar (2026-10-04, evening)
 
-User-confirmed: the race is sharp at 1920×1080, borderless, and alt-tab / taskbar behave.
+Confirmed in play: the race is sharp at 1920×1080, borderless, and alt-tab / taskbar behave.
 
 ### 13.1 The engine drops every display mode larger than 1600
 
@@ -1218,7 +1208,7 @@ version was read (reading too early returns 0 → a false "GVRIO board" error). 
 2026-10-04:** `Shell.am` `Behavior95` `ioBoardDelay = presentation.realTime + 15.0;` →
 `+ 0.5;` via `Tools\Edit-AmScript.py` (record `0x28867`, compressed size kept; previous file
 `Shell.am.pre-iobdelay`, pristine `Shell.am.oem`). The 0.5 s re-check in step 8 is unchanged.
-User-confirmed: startup is visibly faster. Safe on a real cabinet too: the board-PRESENCE check
+Confirmed: startup is visibly faster. Safe on a real cabinet too: the board-PRESENCE check
 (step 7, `IOBoardMajorVersion == 0` → hard stop, no retry) runs *before* this delay, so the 15 s
 never protected against a late board; the delayed step-8 version check re-checks every 0.5 s on
 its own. For a cabinet that autostarts at boot, delay the launcher instead.
@@ -1227,7 +1217,7 @@ its own. For a cabinet that autostarts at boot, delay the launcher instead.
 
 ## 14. Gamepad support — and how the race really takes the cabinet's input (2026-10-04, night)
 
-Goal: Xbox and PlayStation pads in the front end and the race, with NFS Underground's layout.
+Goal: Xbox and PlayStation pads in the front end and the race.
 Everything below was read out of `NASCAR_GVR.exe` (Ghidra) and `GvrIO_oem.dll` (capstone); the
 pad code is `src\GvrIOShim\GvrIOPad.cpp`.
 
@@ -1302,11 +1292,11 @@ the race (`local_4 = 999.9` in the same function).
 
 ### 14.4 Implementation (`GvrIO.dll` shim, deployed to `Game\` and `Shell\bin\`)
 
-* `GvrIOPad.cpp` (new), wired from `GvrIOShim.cpp`. The pad reader is NFSU's `GvrInputEmu`
-  ported: XInput (any of the 4 user slots) and DS4 raw HID (gamepad collection, USB or
-  Bluetooth, feature `0x02` for the full Bluetooth report). Pad discovery runs on a background
-  thread, so the game threads never pay for an empty XInput slot (NFSU's 100%-CPU trap) or a
-  HID scan; unplugging and replugging is picked up.
+* `GvrIOPad.cpp` (new), wired from `GvrIOShim.cpp`. The pad reader handles XInput (any of the
+  4 user slots) and DS4 raw HID (gamepad collection, USB or Bluetooth, feature `0x02` for the
+  full Bluetooth report). Pad discovery runs on a background thread, so the game threads never
+  pay for an empty XInput slot (polling one re-enumerates devices every call — a 100%-CPU trap)
+  or a HID scan; unplugging and replugging is picked up.
 * **Buttons:** `cGvrIO::Initialize` (already overridden) first redirects `GvrIO_oem.dll`'s
   `DINPUT8!DirectInput8Create` import, to learn which `IDirectInput8A` is GvrIO's. Then the
   `CreateDevice` (slot 3) and `GetDeviceState` (slot 9) entries of DirectInput's **shared**
@@ -1339,49 +1329,49 @@ the race (`local_4 = 999.9` in the same function).
   (up/down) for the Swingman camera, over half-way. The engine's horn starts on press and stops
   on release. The first build's `GvrIO.xml` `NOS` line was removed again (`GvrIO.xml` is the OEM
   file).
-* **Map:** `nascar_settings.ini` `[Controller]` (race) and `[Frontend]` (menus), with NFSU's
-  syntax and button names; defaults in `map_defaults()`. `GVRIOSHIM_NO_PAD=1` disables all of
+* **Map:** `nascar_settings.ini` `[Controller]` (race) and `[Frontend]` (menus), as
+  `action = button` lines with named buttons; defaults in `map_defaults()`. `GVRIOSHIM_NO_PAD=1` disables all of
   it. Previous shim kept as `GvrIO.dll.pre-pad`. Exports unchanged (11).
 
-### 14.5 NFSU layout → NASCAR
+### 14.5 Pad layout
 
-| Pad | NFSU race | NASCAR race | NFSU menus | NASCAR menus |
-|---|---|---|---|---|
-| Left stick | steering | steering | menu wheel | car / track select (wheel) |
-| R2 / RT | gas | gas | accept (name entry) | gas pedal = select |
-| L2 / LT | brake | brake | backspace | — |
-| Cross / A | e-brake, confirm, skip intro | **— (no e-brake on this cabinet)** | select | select (Start) |
-| Circle / B | nitrous | **horn** (the engine's Horn control, J) | exit | back (Look Back) |
-| Right stick | — | **chase-camera turn** (numpad 4/6/8/2) | — | — |
-| Square / X | shift up | shift up (manual, 4 gears) | — | — |
-| Triangle / Y | shift down | shift down | — | — |
-| L1 / LB | look back | look back | — | — |
-| R1 / RB | camera | camera (View) | — | — |
-| Options / Menu | start / reset car | Start = put the car back on track | operator | operator |
-| D-pad up | — | — | nav up | up (View) |
-| D-pad down | quit (prompt) | **quit: hold 1 s** (four-button abort) | nav down | down (Music) |
-| D-pad left / right | — / music | — / music | nav | left / right (+ steer the selectors) |
-| R3 | — | — | card | **— (no card reader)** |
+| Pad | Race | Menus |
+|---|---|---|
+| Left stick | steering | car / track select (wheel) |
+| R2 / RT | gas | gas pedal = select |
+| L2 / LT | brake | — |
+| Cross / A | **— (no e-brake on this cabinet)** | select (Start) |
+| Circle / B | **horn** (the engine's Horn control, J) | back (Look Back) |
+| Right stick | **chase-camera turn** (numpad 4/6/8/2) | — |
+| Square / X | shift up (manual, 4 gears) | — |
+| Triangle / Y | shift down | — |
+| L1 / LB | look back | — |
+| R1 / RB | camera (View) | — |
+| Options / Menu | Start = put the car back on track | operator |
+| D-pad up | — | up (View) |
+| D-pad down | **quit: hold 1 s** (four-button abort) | down (Music) |
+| D-pad left / right | — / music | left / right (+ steer the selectors) |
+| R3 | — | **— (no card reader)** |
 
 ### 14.6 Status
 
-**User-confirmed 2026-10-04** with a PS4 DualShock 4 over Bluetooth (raw HID, report `0x11`,
+**Confirmed 2026-10-04** with a PS4 DualShock 4 over Bluetooth (raw HID, report `0x11`,
 547 bytes): menus, driver / transmission (Manual included) / track select, steering, gas and
 brake, the buttons, manual shifting, the horn and the right-stick camera. Not separately
-reported: hold-to-quit. Not tried: an Xbox pad (its XInput path is NFSU's, unchanged).
+verified: hold-to-quit. Not tried: an Xbox pad (the XInput path).
 `nascar_settings.ini` `[Debug] Log=true` (read when each program starts; or the environment
 variable `GVRIOSHIM_LOG=1`) writes `gvrioshim.log` next to each executable: hook installation, pad
 found/lost, the map in use, and every change of the held cabinet and race keys.
 
-**Horn — final (2026-10-05, user-confirmed):** the engine's `.CTL` `Control - Horn` makes **no sound** in this build (tested on H and J, keyboard and pad). The only horn is the cabinet **NOS** input: `GvrIO.xml` gets `<key char="j" name="NOS" …>` (J, because H is the engine's HUD-cycle hotkey), the pad's horn holds that key, and `GvrIOShim.cpp` `patch_horn_stop()` reroutes `0x4DA348` through a stub that stops vehicle sound 61 when the NOS flag drops — the sample loops and the race never stopped it (flag watched live: it does return to 0). Stop recipe copied from the race's checkpoint-warning code at `0x482BD5`: slot = owner+`0xA80` (or `+0x10CC` if byte owner+`0xC8` is 0) + `0xE8` + id×`0x14`; handle pair → `ebx`/`esi`; call `0x4A73F0`; clear the active byte owner+(id×9+`0x34`)×4. `GVRIOSHIM_NO_HORN_PATCH=1` skips it. `Control - Horn` is back to the OEM `(0, 89)`. This supersedes the §14.4 "race-only keys: horn holds J" bullet.
+**Horn — final (2026-10-05, confirmed):** the engine's `.CTL` `Control - Horn` makes **no sound** in this build (tested on H and J, keyboard and pad). The only horn is the cabinet **NOS** input: `GvrIO.xml` gets `<key char="j" name="NOS" …>` (J, because H is the engine's HUD-cycle hotkey), the pad's horn holds that key, and `GvrIOShim.cpp` `patch_horn_stop()` reroutes `0x4DA348` through a stub that stops vehicle sound 61 when the NOS flag drops — the sample loops and the race never stopped it (flag watched live: it does return to 0). Stop recipe copied from the race's checkpoint-warning code at `0x482BD5`: slot = owner+`0xA80` (or `+0x10CC` if byte owner+`0xC8` is 0) + `0xE8` + id×`0x14`; handle pair → `ebx`/`esi`; call `0x4A73F0`; clear the active byte owner+(id×9+`0x34`)×4. `GVRIOSHIM_NO_HORN_PATCH=1` skips it. `Control - Horn` is back to the OEM `(0, 89)`. This supersedes the §14.4 "race-only keys: horn holds J" bullet.
 
 ---
 
 ## 15. A private registry - the game no longer uses the Windows registry (2026-10-05)
 
-Goal: no missing-registry start failures, no administrator rights, and no collision with NFS
-Underground (needed for a cabinet that boots either game). `HKLM\SOFTWARE\gvr\Plus\1.1\Cabinet`
-is genuinely shared: it held NASCAR's `PlusSchemaPath` next to NFSU's `PatchDownloadPath`.
+Goal: no missing-registry start failures, no administrator rights, and no collision with
+another GlobalVR title on the same PC. `HKLM\SOFTWARE\gvr\Plus\1.1\Cabinet` is genuinely shared
+between titles: NASCAR's `PlusSchemaPath` sits there next to other titles' values.
 
 **Who reads what** (value names found in the binaries): the shell scripts (`launchFolder`,
 `attractFolder`, `selectFolder`, names), `NASCARPlugIn.dll` (resolution, `FourButtonAbort`,
@@ -1407,17 +1397,15 @@ launcher now writes its ini-driven values (`FullScreen*`, `MusicVolume`, `Simple
 into `nascar_registry.ini` - no elevation, the old HKLM self-repair is gone.
 
 **Verified** in a scratch test (A and W calls, size queries, set/delete, step-by-step opens,
-unrelated keys untouched) and in a real session (user, 2026-10-05): menus and a full race; the
+unrelated keys untouched) and in a real session (2026-10-05): menus and a full race; the
 store got the shell's `UpTime*`/`CommandLine` and the race's `tracefilenum=34` while the real
 registry stayed at 33. Not caused by it: `Result_*` stay 0 (also in the real registry before), and
 `AMPlayer` exiting with 0xC0000005 after a session (seen in four earlier sessions the same day).
 
-**Done the same day.** `Install-NASCAR-GVR-Portable.ps1` no longer writes these HKLM keys. It
+**Installer.** `Install-NASCAR-GVR-Portable.ps1` no longer writes these HKLM keys. It
 only creates `nascar_registry.ini` (`FullScreenWidth`/`Height`) if it is missing. The hook engine
-moved to a shared library, `GIT\src\GvrPrivReg`, and `GvrIOReg.cpp` now holds only NASCAR's roots
-and defaults. NFSU uses the same library in `GVRInputRaw.dll` (`nfsu_registry.ini`,
-`GIT\src\GvrInputEmu\NfsuPrivReg.cpp`), with `noSeed` set because the real `gvr` tree holds
-NASCAR's values. See `GAME_ONLY_INSTALL_PLAN.md`, 2026-10-05.
+lives in a shared library, `src\GvrPrivReg`, and `GvrIOReg.cpp` holds only NASCAR's roots
+and defaults.
 
 
 ---

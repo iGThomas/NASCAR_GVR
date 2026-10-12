@@ -115,12 +115,11 @@ Decoder: `NASCAR\Tools\Decode-Ctl.py <file.CTL>` prints every binding with key n
 
 ## 4. Xbox and PlayStation pads (2026-10-04)
 
-Same pads and layout as NFS Underground (`GvrInputEmu`): Xbox through XInput, PS4 DualShock 4
-through raw HID (USB or Bluetooth). Built into the `GvrIO.dll` shim (`src\GvrIOShim\GvrIOPad.cpp`):
+Xbox pads through XInput, PS4 DualShock 4 through raw HID (USB or Bluetooth). Built into the `GvrIO.dll` shim (`src\GvrIOShim\GvrIOPad.cpp`):
 the sticks and triggers are the cabinet's analog wheel and pedals, and each button "holds" the
 cabinet key it stands for in GvrIO's own keyboard, so both programs treat it exactly like the
-cabinet button. Map: `nascar_settings.ini` `[Controller]` (race) and `[Frontend]` (menus), with
-NFSU's syntax and button names; `GVRIOSHIM_NO_PAD=1` turns it off. How it works:
+cabinet button. Map: `nascar_settings.ini` `[Controller]` (race) and `[Frontend]` (menus), as
+`action = button` lines with named buttons; `GVRIOSHIM_NO_PAD=1` turns it off. How it works:
 `NASCAR_FINDINGS.md` §14.
 
 | Pad (Xbox) | Race | Menus |
@@ -137,13 +136,12 @@ NFSU's syntax and button names; `GVRIOSHIM_NO_PAD=1` turns it off. How it works:
 | D-pad left / right | — / music | left / right (+ steer car and track select, + Auto / Manual) |
 | Right stick | chase-camera turn (numpad 4/6/8/2) | — |
 
-**Compared with NFSU:**
-* **Not in NASCAR:** e-brake (NFSU Cross), nitrous (NFSU Circle — Circle is the horn here), the
-  quit *prompt* (NASCAR has none — the quit is the cabinet's four-button abort, so the pad makes
-  you hold D-pad down for a second), the card button (NFSU R3), and the name-entry
-  accept/backspace on R2/L2 (NASCAR's menus use R2 as the gas pedal instead).
-* **New in NASCAR:** the horn, the right-stick chase camera, the 4-speed shifter (4 gears, not
-  NFSU's 6), Start = put the car back on the track, and the four-button abort. Cabinet-only buttons with no pad button: Volume
+**Notes on the layout:**
+* **Not on the pad:** the race has no e-brake or nitrous action (Circle is the horn), and no quit
+  *prompt* — the quit is the cabinet's four-button abort, so the pad makes you hold D-pad down for
+  a second. The menus use R2 as the gas pedal, not for name-entry accept / backspace.
+* **Cabinet functions on the pad:** the horn, the right-stick chase camera, the 4-speed shifter
+  (4 gears), Start = put the car back on the track, and the four-button abort. Cabinet-only buttons with no pad button: Volume
   up/down, Service, Coin, Motion disable, LookBack2.
 * **Keyboard-only race extras** (the race's own `.CTL` keyboard, not reachable through GvrIO):
   clutch, pit menu, traction-control override, brake bias, look left/right, instant replay,
@@ -183,9 +181,9 @@ first HID pad found wins, XInput still comes first).
   right-stick up/down as gas/brake (max of stick and trigger) and stops the right stick turning
   the Swingman camera vertically.
 * Verified without hardware: a decoder harness (synthetic `0x30` / `0x21` / `0x3F` reports + a DS4
-  regression) passes, and shell + race run with the new DLL. **Needs a real pad on USB and
-  Bluetooth**: check `pad: Switch Pro Controller over … - full report mode requested` and the
-  player-1 LED, then every button and both sticks.
+  regression) passes, and shell + race run with the new DLL. **Not yet verified with a real pad on
+  USB or Bluetooth**: on a working pad the log shows `pad: Switch Pro Controller over … - full
+  report mode requested` and the player-1 LED lights.
 
 ### 4.y Steering wheels and force feedback (2026-10-11, untested on hardware)
 
@@ -210,43 +208,43 @@ Strength" Normal / Light = `-handling 0/1`): spring 40 / 25, damper 40 / 25, rum
 50-55, grass 21-32 / 11-21, collision cars 25/15 (offset/force), walls 35/25. The EA `.CTL` FFB
 block is dead code (no DirectInput effect GUIDs in the exe).
 
-**Our part** (`src\GvrIOShim\GvrIOWheel.cpp`, `[Wheel]` in `nascar_settings.ini`):
+**The shim's part** (`src\GvrIOShim\GvrIOWheel.cpp`, `[Wheel]` in `nascar_settings.ini`):
 * Input. The shim already answers msg 5 when no I/O-board pedals exist, so the wheel feeds the
   same `PadState` as the pads: steering -127..127 (optional `Rotation` / `DeviceRange` scaling),
   gas / brake 0..255 from separate axes (default `y` / `rz`) or one combined axis; each pedal's
   rest value is learned from the first reading, so either direction works. Buttons map to pad
   positions (`ButtonN = cross`...; DFGT guesses built in, every press logged with its number); the
   hat is the D-pad. The wheel is found on the pad discovery thread (first `DI8DEVTYPE_DRIVING`, or
-  `[Wheel] Device=` name match) with our own `IDirectInput8A`, read **non-exclusively**, so it
+  `[Wheel] Device=` name match) with the shim's own `IDirectInput8A`, read **non-exclusively**, so it
   never conflicts with Steering.dll's exclusive hold.
 * Force feedback. `ForceFeedback = arcade` (default) leaves it to Steering.dll - the exact cabinet
-  effects. `shim` = our own spring + damper (arcade Normal 40 / 40, `ForceSpring` / `ForceDamper`
-  / `ForceGain`), exclusive + foreground on our foreground window, for a wheel Steering.dll does
-  not pick up. `off` = none of ours.
+  effects. `shim` = the shim's own spring + damper (arcade Normal 40 / 40, `ForceSpring` / `ForceDamper`
+  / `ForceGain`), exclusive + foreground on the process's foreground window, for a wheel Steering.dll does
+  not pick up. `off` = no shim effects.
 * Trap fixed with it: GvrIOPad's shared `GetDeviceState` hook used to treat every read of >= 256
   bytes as a keyboard; Steering.dll's 272-byte `DIJOYSTATE2` read would have received the pad's
-  right-stick camera keys as button presses. Now exactly 256 bytes only, and our wheel is skipped.
-* Untested risks for the tester: (1) the shell and the race BOTH load Steering.dll; if the shell
+  right-stick camera keys as button presses. Now exactly 256 bytes only, and the shim's own wheel is skipped.
+* Known risks, not yet verified on hardware: (1) the shell and the race BOTH load Steering.dll; if the shell
   keeps the wheel exclusively while the race runs, the race may get no force feedback (the race's
-  acquire would fail) - check that FFB works in a race, not only in the menus; (2) the DFGT must
+  acquire would fail), so FFB working in the menus does not prove it works in a race; (2) the DFGT must
   run in native mode (Logitech G HUB / Gaming Software) to enumerate as a driving device with
   separate pedals; (3) Steering.dll's shell self-test can write `ForceFeedbackBroken` to the
   NASCAR registry key.
 
-**2026-10-12 - first real-wheel report (Logitech G29 + Driving Force Shifter, v1.0.8):** steering,
+**2026-10-12 - first real-wheel test (Logitech G29 + Driving Force Shifter, v1.0.8):** steering,
 the arcade force feedback (via Steering.dll) and the paddle shifters work; **pedals and the H-shifter
 did not.** Pedals: with a wheel attached, Steering.dll reports a calibrated gas range, so the shim's
 `real_pedals` check passed the OEM's axis values through - and the OEM gas/brake come from the absent
-I/O board (0). Fix (1.0.9 candidate): `wheel_present()` - while our wheel is open its axes always win
+I/O board (0). Fix (1.0.9): `wheel_present()` - while the shim's wheel is open its axes always win
 (GvrIOShim.cpp msg 5, race and shell). H-shifter: the shifter's gears are wheel buttons 12..17
 (gear 1..6, 18 = reverse) on G29/G920/G923; new pad actions `gear1`..`gear4` select the arcade's
 4-position shifter gear directly (5th/6th = 4th), defaulted for those wheels, `[Wheel] ButtonN =
 gearN` for others. The log now names each wheel axis the first time it moves
-(`wheel: axis 'rz' moves ...`), so a tester's log shows which axis is gas / brake / clutch.
-Tester follow-up (same day, v1.0.8): the pedals DID work in the menus (driver selection) and stopped
+(`wheel: axis 'rz' moves ...`), so the log shows which axis is gas / brake / clutch.
+Follow-up (same day, v1.0.8): the pedals DID work in the menus (driver selection) and stopped
 once the race (NASCAR_GVR.exe) loaded - each program makes its own `real_pedals` decision, and only the
 race's OEM Steering.dll reported a calibrated range. The 1.0.9 `wheel_present()` override covers both.
 Paddles "not working" in the race = automatic transmission: sequential (paddles) and H-shifter gears
 only act in **manual**, chosen on the shell's transmission screen.
 
-**2026-10-12:** on a Switch Pro pad the operator menu is on **Minus** (requested). `latch_switch` swaps the Minus/Plus positions in the front end only (Minus reports as Options); in the race Plus stays Start.
+**2026-10-12:** on a Switch Pro pad the operator menu is on **Minus**. `latch_switch` swaps the Minus/Plus positions in the front end only (Minus reports as Options); in the race Plus stays Start.

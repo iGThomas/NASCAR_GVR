@@ -6,10 +6,8 @@ Translates the decrypted GlobalVR cabinet schema (NASCARcabinet.txt, SQL
 Server 2000 DDL) into an equivalent SQLite database, then seeds and
 provisions it so the Anark shell / GvrPlus stack can run with no SQL Server.
 
-This is the NASCAR sibling of the parent project's Tools/Build-GvrSqliteDb.py.
 Kept standalone on purpose so the NASCAR folder is self-contained. The
-schema-parsing and seeding logic is the same; the provisioning differs
-(NASCAR uses _NAS1 tables and ships far more seed content than NFSU did).
+provisioning is NASCAR-specific (_NAS1 tables and a large seed content set).
 
 Inputs (produced by Tools\\Decrypt-GvrEnc.ps1):
     NASCARcabinet.txt          schema DDL + stored procs + GlobalVariable seeds
@@ -167,7 +165,7 @@ def seed_content(cur, tbl_cols, content_path):
 def seed_global_variables(cur, schema_path):
     """GlobalVariable's seed rows live in the SCHEMA file, not the content file.
 
-    Same trap as NFSU: seed_content() never sees them, so the table would ship
+    The trap: seed_content() never sees them, so the table would ship
     empty and the shell's post-race logic would have no row to read or update.
     GlobalVariable also has no PRIMARY KEY in the OEM DDL (the upsert lives in
     SP_InsertOrUpdate_GlobalVariable), so we add the unique index that restores

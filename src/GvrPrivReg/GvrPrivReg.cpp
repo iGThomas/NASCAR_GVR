@@ -1,6 +1,6 @@
 // ============================================================================
-//  GvrPrivReg.cpp  -  a private, per-game registry (shared by the NASCAR and
-//                     NFSU shims; see GvrPrivReg.h)
+//  GvrPrivReg.cpp  -  a private, per-game registry (a shared library, used by
+//                     the GvrIO shim; see GvrPrivReg.h)
 //
 //  Every advapi32 registry call that touches one of the game's roots below
 //  HKLM\SOFTWARE (either view) is answered from <install>\<storeName>, an ini
@@ -340,7 +340,7 @@ static void w2a(LPCWSTR w, char* a, size_t n)
 // stack buffers) and take the lock only for the game's own keys. Locking every open made foreign
 // threads queue on g_lock while a game thread held it inside GetPrivateProfileStringA, which can
 // deadlock (lock-order inversion) - the shell then hung at startup with no window on some
-// Windows 10 PCs, cured by GVR_NO_PRIVATE_REGISTRY=1 (NASCAR BUGS.md #2).
+// Windows 10 PCs, cured by GVR_NO_PRIVATE_REGISTRY=1.
 static LONG open_private(HKEY parent, const char* sub, PHKEY out, bool create, bool* handled, LPDWORD disp)
 {
     char sec[200];

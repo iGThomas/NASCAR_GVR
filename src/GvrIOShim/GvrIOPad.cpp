@@ -2,7 +2,7 @@
 //  GvrIOPad.cpp  -  Xbox and PlayStation controller support for NASCAR
 //                   (compiled into the GvrIO.dll shim, see GvrIOShim.cpp)
 //
-//  Same pads and the same layout as NFS Underground's GvrInputEmu: an Xbox pad
+//  Supported pads: an Xbox pad
 //  (or anything Steam Input presents as one) through XInput, and a PS4
 //  DualShock 4 or a Nintendo Switch Pro Controller through raw HID, over USB or
 //  Bluetooth. The Switch pad's ZL/ZR are digital, so [Controller] Pedals =
@@ -44,7 +44,7 @@
 //  (inject_race_keys): numpad 4/6/8/2.
 //
 //  Map: nascar_settings.ini [Controller] (race) and [Frontend] (menus). The
-//  defaults below put every function on the button NFSU uses for it.
+//  defaults are in map_defaults() below.
 //  GVRIOSHIM_NO_PAD=1 turns all of this off.
 // ============================================================================
 
@@ -113,7 +113,7 @@ struct XINPUT_STATE_   { DWORD dwPacketNumber; XINPUT_GAMEPAD_ Gamepad; };
 typedef DWORD (WINAPI *PFN_XInputGetState)(DWORD, XINPUT_STATE_*);
 static PFN_XInputGetState pXInputGetState = NULL;
 // The connected XInput user index, found by the discovery thread. XInputGetState on an
-// EMPTY slot re-enumerates devices on every call (NFSU's 100%-CPU "race-end hang"), so the
+// EMPTY slot re-enumerates devices on every call (a 100%-CPU trap), so the
 // game threads only ever ask a slot that is known to be connected.
 static volatile LONG g_xiSlot = -1;
 
@@ -511,7 +511,7 @@ static const ActDef RACE_ACTS[] = {
     { "shiftup",   0,  S_SHIFTUP }, { "shiftdown", 0, S_SHIFTDOWN },
     { "quit",      0,  S_QUIT },    { "abort",     0, S_QUIT },
     { "none",      0,  S_NONE },
-    // NFSU actions with nothing to do in NASCAR - accepted so a copied NFSU map loads
+    // Actions with nothing to do in NASCAR - accepted and ignored so such a map still loads
     { "ebrake",    0,  S_NFSU }, { "confirm", 0, S_NFSU }, { "skipintro", 0, S_NFSU },
 };
 // In the menus (AMPlayer.exe): the operator menu treats View/Music/LookBack as
@@ -585,13 +585,13 @@ unsigned pad_hat_bits(int hat) { return hat_buttons(hat); }
 
 static void map_defaults(void)
 {
-    // Race: NFSU's [Controller] positions. Circle was nitrous there; here it is the horn.
+    // Race defaults ([Controller]). Circle is the horn.
     static const struct { unsigned ub; const char* act; } race[] = {
         { UB_L1, "lookback" }, { UB_R1, "view" }, { UB_OPTIONS, "start" }, { UB_CIRCLE, "horn" },
         { UB_SQUARE, "shiftup" }, { UB_TRIANGLE, "shiftdown" },
         { UB_DRIGHT, "music" }, { UB_DDOWN, "quit" },
     };
-    // Menus: NFSU's [Frontend] positions.
+    // Menu defaults ([Frontend]).
     static const struct { unsigned ub; const char* act; } front[] = {
         { UB_CROSS, "select" }, { UB_CIRCLE, "back" }, { UB_OPTIONS, "operator" },
         { UB_DUP, "up" }, { UB_DDOWN, "down" }, { UB_DLEFT, "left" }, { UB_DRIGHT, "right" },

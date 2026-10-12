@@ -21,13 +21,10 @@
 //
 //      GVRSDType:  0 = PLAYER CARD   1 = OPERATOR   2 = DONGLE   3 = HOURLY
 //
-//  NFSU's GIT\src\GvrCardEmu implements the same ABI, but for a *player card*:
-//  it models insertion and ejection (tied to pressing START, an auto-eject
-//  timer, a shared event, a companion PCSCSCR2.dll so CAREER is not greyed
-//  out). A dongle is permanently fitted, so none of that belongs here and all
-//  of it is deliberately absent. Shared ABI, separate implementation - the two
-//  titles ship different 2008 builds and patched binaries never port between
-//  them.
+//  A *player card* back end on the same ABI has to model insertion and
+//  ejection (tied to pressing START, an auto-eject timer, a shared event, a
+//  companion PCSCSCR2.dll). A dongle is permanently fitted, so none of that
+//  belongs here and all of it is deliberately absent.
 //
 //  WHAT THE SHELL ACTUALLY REQUIRES
 //  --------------------------------

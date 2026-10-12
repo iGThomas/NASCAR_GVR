@@ -72,11 +72,12 @@ folder. Advanced: the installer still takes command-line options, e.g.
 analog gas and brake set `Pedals = rightstick` under `[Controller]` in `nascar_settings.ini`
 (right stick up = gas, down = brake). Steam can also present the pad as an Xbox controller.
 
-**Steering wheels (new, not yet tested on real hardware):** a Logitech Driving Force GT, and most
-other wheels Windows lists as a driving device, drive with their wheel and pedals. Force feedback is
-the arcade's own (centring, damping, grass and rumble-strip vibration, collision jolts). Install
-Logitech G HUB for a Logitech wheel. Settings are under `[Wheel]` in `nascar_settings.ini`;
-with `[Debug] Log=true` the log names the wheel and every button number it reports.
+**Steering wheels:** Logitech (Driving Force GT, G25, G27, G29, G920, G923), Thrustmaster and most
+other wheels Windows lists as a driving device drive with their wheel and pedals, set up
+automatically by model, with or without Logitech G HUB. Force feedback is the arcade's own
+(centring, damping, grass and rumble-strip vibration, collision jolts). Gas and brake the wrong way
+round? Set `SwapPedals = true` under `[Wheel]` in `nascar_settings.ini`. With `[Debug] Log=true`
+the log names the wheel, its pedal layout and every button number it reports.
 
 Every control, and how to remap the pad: [docs/findings/NASCAR_CONTROLS.md](docs/findings/NASCAR_CONTROLS.md).
 

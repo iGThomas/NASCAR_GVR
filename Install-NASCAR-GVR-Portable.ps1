@@ -17,9 +17,6 @@
   The game writes nothing to the Windows registry: its own keys live in
   <ROOT>\nascar_registry.ini (answered by the GvrIO shim), with every folder
   worked out from wherever the install sits - move or copy it and it still runs.
-
-  Same conventions as the NFSU portable installer in
-  GIT\NFSU_GVR_Portable\Install-NFSU-GVR-Portable.ps1.
 #>
 [CmdletBinding()]
 param(
@@ -54,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-12-nascar-portable-4.13" # 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
+$Version = "2026-10-12-nascar-portable-4.14" # 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -431,7 +428,7 @@ $LegacyDlls = @("msvcr71.dll", "msvcp71.dll", "MFC71.dll", "msvcr70.dll", "msvcr
 # The GVR device layer, from the disc's WINDOWS\system32 file group. PLUSDE.dll
 # loads "DongleStorageDevice.dll" BY NAME (the string is in PLUSDE) and calls its
 # CreateGVRStorageDeviceImp export, via GVRStorageDevice.dll - the smart-card /
-# dongle storage ABI documented in the parent project's GVRSCR28_ABI_REPORT.md.
+# dongle storage ABI (the GVRStorageDevice vtable).
 # Without these the Anark shell dies a second or two after its database init with
 # an unhandled exception (0xC000041D) inside GvrPlusDEPlugin.dll. Verified: with
 # them present the shell stays up indefinitely.
@@ -562,8 +559,7 @@ function Install-GvrIoShim($game, $shell) {
 }
 
 # Support DLLs are staged on EVERY run (idempotent), not just during the first
-# copy, so re-running the installer repairs or adds them to an existing install -
-# the same reason the NFSU portable installer stages its DLLs unconditionally.
+# copy, so re-running the installer repairs or adds them to an existing install.
 function Install-SupportDlls($game, $shell) {
     # They come from the game disc and are already in place from the first install.
     if ($UpdateMode) { Log "--- support DLLs: already in place (update - no disc) ---"; return }
@@ -580,7 +576,7 @@ function Install-SupportDlls($game, $shell) {
 }
 
 # The operator-menu XML files carry absolute C:\NASCAR paths, which is what would
-# break a relocated install (the NASCAR equivalent of the NFSU GVRD path repoint).
+# break a relocated install.
 # 5 more point at C:\NASCAR_TOUR_GOLF_2006 - dead leftovers from the PGA Golf
 # codebase this shell was derived from, whose target .am files DO exist here, so
 # repointing them fixes menu entries that were broken on the real cabinet too.
@@ -872,8 +868,8 @@ function Disable-GammaSet($shell) {
     Log "  GammaSet.exe disabled (cabinet gamma/vibrance tool)"
 }
 
-# Dependencies are large (100 MB DirectX redist, 35 MB .NET 1.1); reuse the ones the
-# NFSU portable package already carries rather than duplicating them here.
+# Dependencies are large (100 MB DirectX redist, 35 MB .NET 1.1); use the package's own
+# Dependencies folder, else a sibling package's copy in the dev layout, rather than duplicating them.
 function Resolve-Dependencies {
     if (![string]::IsNullOrEmpty($DependenciesRoot)) { return $DependenciesRoot }
     foreach ($c in @((Join-Path $SourceRoot "Dependencies"),
@@ -885,7 +881,7 @@ function Resolve-Dependencies {
 
 # The shell + PLUSDE need REAL CLR 1.1. Do not redirect them to CLR 2.0: PLUSDE's
 # mixed-mode code uses native C++ exceptions as control flow and that EH interop
-# access-violates on 2.0 (proven in the NFSU work). The plain 1.1 redist fails with
+# access-violates on 2.0. The plain 1.1 redist fails with
 # MSI 1603 on Windows 10/11 - the fix is slipstreaming SP1 into an admin image.
 # ---- .NET 1.1 crash dialogs must not stall the silent install ----------------------------------
 # During the .NET 1.1 MSI install, regsvcs.exe (COM+ registration for System.EnterpriseServices,
@@ -1043,7 +1039,7 @@ function Ensure-DotNet {
 }
 
 # NASCAR_GVR.exe imports d3d9 directly and no d3dx9 helper, so the June-2010 redist
-# is normally unnecessary - unlike NFSU, which needs it. Opt in with -InstallDirectX.
+# is normally unnecessary. Opt in with -InstallDirectX.
 function Ensure-DirectX {
     if (!$InstallDirectX) { return }
     $dep = Resolve-Dependencies
@@ -1058,10 +1054,9 @@ function Ensure-DirectX {
     else { Warn "DXSETUP.exe not found after extracting the redist" }
 }
 
-# App-local DXVK (D3D9 -> Vulkan) beside the game. In the NFSU work this was needed
-# because that engine's physics is framerate-tied and ran absurdly fast on modern GPUs.
-# Whether NASCAR's EA engine has the same tie is UNVERIFIED (it is a different engine
-# and the cabinet ran 1360x768 on a fixed-refresh panel), so this is opt-in: use -Dxvk
+# App-local DXVK (D3D9 -> Vulkan) beside the game. Some D3D9-era engines tie physics to
+# the framerate and run absurdly fast on modern GPUs; whether NASCAR's EA engine does is
+# UNVERIFIED (the cabinet ran 1360x768 on a fixed-refresh panel), so this is opt-in: use -Dxvk
 # if the game runs too fast or the native D3D9 path misbehaves on your GPU.
 function Deploy-Dxvk($game) {
     if (!$Dxvk) { return }
@@ -1124,8 +1119,8 @@ function Install-Registry($root) {
     # (NASCAR_FINDINGS section 15). Folder values (launchFolder, GameRoot, PlusSchemaPath, ...)
     # are computed from the install folder at run time and the OEM values are built in, so a
     # fresh install only needs the display size here; NascarLaunch.exe rewrites the
-    # nascar_settings.ini values on every start. Nothing machine-wide, no NFSU collision
-    # (gvr\Plus\1.1\Cabinet is shared between the titles in the real registry).
+    # nascar_settings.ini values on every start. Nothing machine-wide, no collision with other
+    # GVR titles (gvr\Plus\1.1\Cabinet is shared between the titles in the real registry).
     $store = Join-Path $root "nascar_registry.ini"
     if ($DryRun) { Log "  would write $store (display $Width x $Height)" }
     elseif (Test-Path $store) { Log "  $store already exists - kept (it holds the game's state)" }

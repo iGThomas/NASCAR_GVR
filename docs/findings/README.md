@@ -1,7 +1,7 @@
 # NASCAR Team Racing (GlobalVR) — findings
 
-Everything we learned getting the arcade cabinet's software to run as an ordinary Windows game.
-Each point says what we found and why it matters. The section numbers (§) point into
+Everything learned getting the arcade cabinet's software to run as an ordinary Windows game.
+Each point says what was found and why it matters. The section numbers (§) point into
 [NASCAR_FINDINGS.md](NASCAR_FINDINGS.md), which has the addresses, byte offsets and evidence.
 
 Other documents in this folder:
@@ -12,9 +12,8 @@ Other documents in this folder:
 | [NASCAR_CONTROLS.md](NASCAR_CONTROLS.md) | Every control: keyboard, cabinet buttons, Xbox / PlayStation pads |
 | [NASCAR_REGISTRY.md](NASCAR_REGISTRY.md) | Every registry key the game and the menus read |
 | [NASCAR_SQLITE.md](NASCAR_SQLITE.md) | How the SQL Server database was replaced with SQLite |
-| [NASCAR_INSTALL_ANALYSIS.md](NASCAR_INSTALL_ANALYSIS.md) | What the original cabinet installer does, and what we avoid |
+| [NASCAR_INSTALL_ANALYSIS.md](NASCAR_INSTALL_ANALYSIS.md) | What the original cabinet installer does, and what this install avoids |
 | [NASCAR_AUTOSTART_AND_INSTALL_REGISTRY.md](NASCAR_AUTOSTART_AND_INSTALL_REGISTRY.md) | How the cabinet takes over Windows at boot (never reproduced here) |
-| [NASCAR_PLAN.md](NASCAR_PLAN.md) | The day-by-day engineering log |
 
 ---
 
@@ -48,7 +47,7 @@ Other documents in this folder:
 - **The race needs a track on its command line.** `-track Daytona -startPos 43` works. The
   game's argument parser ignores quotes, so names with spaces cannot be passed. (§8.4)
 - **`GvrIO.dll` hangs the race at startup.** The race creates and destroys GvrIO without
-  starting it, and the original DLL then waits forever. Our drop-in `GvrIO.dll` forwards to the
+  starting it, and the original DLL then waits forever. The drop-in `GvrIO.dll` forwards to the
   original and fixes only that. (installer, `src\GvrIOShim`)
 - **The race refuses screen sizes above 1600.** A hard-coded limit drops every larger display
   mode, so 1920×1080 fell back to a stretched 800×600. The shim raises the limit in memory. (§13.1)
@@ -120,7 +119,7 @@ Other documents in this folder:
 - **Only the v1.1 game disc (050-0136-01) is supported.** A user with the **v1.5** disc got
   "entry point `?CardSwipeStop@GvrSmartDevice@@QAEHXZ` not found" in `NASCARPlugin.dll`. That
   function exists nowhere on the v1.1 disc, so v1.5 is a different build of the menu binaries,
-  and our byte patches do not match it (the installer logs "is not the expected OEM file - left
+  and the installer's byte patches do not match it (the installer logs "is not the expected OEM file - left
   unpatched"). Supporting v1.5 would need that disc, to build a matching patch set.
 
 - Some operator screens that a home install does not need still call cabinet-only functions

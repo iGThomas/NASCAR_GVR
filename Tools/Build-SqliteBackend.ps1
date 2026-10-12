@@ -80,8 +80,8 @@ if (Test-Path $csc11) {
         Where-Object { $_ -notmatch '^\s*$' -and $_ -notmatch 'warning CS0649' } | ForEach-Object { "    $_" }
 }
 elseif (Test-Path $csc20) {
-    # Fallback: build with 2.0 and retarget the metadata to v1.1.4322, the route
-    # the NFSU project used on a box with no 1.1 SDK.
+    # Fallback: build with 2.0 and retarget the metadata to v1.1.4322, for a box
+    # with no 1.1 SDK.
     Log "no 1.1 compiler; building with 2.0 + retarget to v1.1.4322"
     & $csc20 /nologo /target:library /platform:x86 /out:$provider $providerSrc 2>&1 |
         Where-Object { $_ -notmatch '^\s*$' -and $_ -notmatch 'warning CS0649' } | ForEach-Object { "    $_" }

@@ -3,12 +3,9 @@
 //
 //  NASCAR Team Racing (GlobalVR), portable install.
 //
-//  This is the NASCAR counterpart of the NFSU project's GvrLaunch.exe, but it
-//  has much less to do, because this game is far more configurable than NFSU:
+//  It has little to patch, because this game is configurable:
 //
-//    * NFSU hardcodes its resolution in the executables, so GvrLaunch has to
-//      patch DWORDs in memory at startup. NASCAR reads FullScreenWidth /
-//      FullScreenHeight from the registry and also accepts -width/-height/
+//    * NASCAR reads FullScreenWidth / FullScreenHeight from the registry and also accepts -width/-height/
 //      -windowed/-fullscreen on the command line, so NOTHING is patched here.
 //
 //  What it does:
@@ -94,8 +91,8 @@ static bool reg_read_sz(HKEY root, const char* sub, const char* val, char* out, 
 }
 
 // .NET Framework 1.1 - the front end needs it (AMPlayer.exe.config pins v1.1.4322 for the
-// PLUSDE database layer; the race does not use .NET). Detected by the runtime's FILE, like NFSU's
-// GvrLaunch: a working 1.1 often has no NDP registry key, so the registry would falsely say no.
+// PLUSDE database layer; the race does not use .NET). Detected by the runtime's FILE:
+// a working 1.1 often has no NDP registry key, so the registry would falsely say no.
 static bool dotnet11_installed(void)
 {
     char p[MAX_PATH];
@@ -202,7 +199,8 @@ struct Settings {
     std::string mode;        // "shell" (cabinet) or "race" (straight in)
     std::string extraArgs;
     std::string track, series;
-    int  car, laps;
+    std::string car;         // kept as text: "01" (Nemechek) and "1" (Truex) are different cars
+    int  laps;
     bool waitForExit;
 };
 
@@ -224,7 +222,12 @@ static void load_settings(Settings& s)
     s.extraArgs     = ini_str("Race", "ExtraArgs", "-noabort -notimeout");
     s.track         = ini_str("Race", "Track", "DAYTONA");
     s.series        = ini_str("Race", "Series", "2005NEXTEL");
-    s.car           = ini_int("Race", "Car", 10);
+    // -car names the car's folder (Vehicles\<series>\<make>\<number>), so a leading zero matters.
+    // The engine splits its command line on whitespace, so any spaces are dropped.
+    std::string car = ini_str("Race", "Car", "10");
+    for (size_t i = 0; i < car.size(); i++)
+        if (!isspace((unsigned char)car[i])) s.car += car[i];
+    if (s.car.empty()) s.car = "10";
     s.laps          = ini_int("Race", "Laps", 3);
     for (size_t i = 0; i < s.mode.size(); i++) s.mode[i] = (char)tolower((unsigned char)s.mode[i]);
 }
@@ -270,7 +273,7 @@ static bool series_installed(const std::string& series, const char* gameDir)
 // HKLM\SOFTWARE\GlobalVR and HKLM\SOFTWARE\gvr from <install>\nascar_registry.ini
 // (GvrIOShim\GvrIOReg.cpp; folder values are computed from the install folder there).
 // So the launcher just writes the ini-driven values into that file - no administrator
-// rights, nothing machine-wide, and the NFSU install can no longer collide with it.
+// rights, nothing machine-wide, and no other GVR title's install can collide with it.
 static void store_set(const char* name, const std::string& value)
 {
     char path[MAX_PATH];
@@ -390,7 +393,7 @@ static void give_focus(DWORD pid)
 // taskbar windows hidden on purpose (the one for a secondary or virtual monitor with
 // "show taskbar on all displays" off, e.g. Meta Quest Link's virtual monitor); forcing those
 // visible every poll made Explorer hide them again, four times a second - the taskbar
-// "freaking out" (BUGS.md #1).
+// "freaking out".
 static const char* kTrayClasses[2] = { "Shell_TrayWnd", "Shell_SecondaryTrayWnd" };
 static HWND g_trays[16];
 static int  g_trayRestores[16];
@@ -415,7 +418,7 @@ static void snapshot_taskbar(void)
 
 // The shell hides the taskbar once per session, so one restore is normal. A taskbar that is
 // hidden again every time we show it belongs to something else - a taskbar replacement such as
-// ExplorerPatcher or StartAllBack hides the real one, even on a single monitor (BUGS.md #1).
+// ExplorerPatcher or StartAllBack hides the real one, even on a single monitor.
 // After kMaxTrayRestores we stop touching that window instead of fighting it.
 static const int kMaxTrayRestores = 3;
 
@@ -441,8 +444,8 @@ static void restore_taskbar(void)
 // process name. With [Display] Borderless=true the race runs -windowed at Width x Height;
 // as soon as its window appears we strip the caption and frame and place it over the
 // monitor it is on (centred if it is smaller). The client area then equals the game's
-// render size exactly, so the picture is not rescaled. Same idea as the NFSU launcher's
-// window handling; only NASCAR_GVR.exe is touched, never the shell.
+// render size exactly, so the picture is not rescaled. Only NASCAR_GVR.exe is touched,
+// never the shell.
 
 static bool pid_is_exe(DWORD pid, const char* exe)
 {
@@ -527,9 +530,9 @@ static void keep_race_above_shell(void)
 // ---------------------------------------------------------------- always-on-top
 //
 // The cabinet shell makes its window always-on-top (WS_EX_TOPMOST), which on a desktop
-// swallows alt-tab: nothing can come in front of it. Like the NFSU project (which clears
-// WS_EX_TOPMOST from outside every second - hooking SetWindowPos in-process crashed that
-// shell), we demote it from here while we wait. The race window is demoted too, except in
+// swallows alt-tab: nothing can come in front of it. We demote it from here, from outside,
+// while we wait (clearing WS_EX_TOPMOST externally is the safe route - hooking SetWindowPos
+// in-process can crash a cabinet shell). The race window is demoted too, except in
 // exclusive fullscreen, where Direct3D owns that flag and removing it can lose the device.
 struct TopmostCtx { bool includeRace; };
 static BOOL CALLBACK untopmost_cb(HWND h, LPARAM lp)
@@ -753,8 +756,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
         std::string seriesArg;
         if (series_installed(s.series, gameDir)) seriesArg = "-series " + s.series + " ";
         char args[1024];
-        snprintf(args, sizeof(args), "-mode single -track %s %s-car %d -laps %d %s -width %d -height %d %s",
-                 s.track.c_str(), seriesArg.c_str(), s.car, s.laps,
+        snprintf(args, sizeof(args), "-mode single -track %s %s-car %s -laps %d %s -width %d -height %d %s",
+                 s.track.c_str(), seriesArg.c_str(), s.car.c_str(), s.laps,
                  s.fullscreen ? "-fullscreen" : "-windowed", s.width, s.height, s.extraArgs.c_str());
         if (!PathFileExistsA(gameExe)) die("NASCAR_GVR.exe was not found:\n%s", gameExe);
         run(gameExe, args, gameDir, s.waitForExit || s.borderless, s);

@@ -3,8 +3,8 @@
 **Status: built and functionally verified (2026-08-12).** The cabinet stack runs against
 an embedded SQLite file; no SQL Server, MSDE, or database service is installed or started.
 
-This is the NASCAR port of the parent project's NFSU SQLite work. The *technique* is the
-same; every artifact had to be re-derived because NASCAR ships a different 2008 build.
+The technique swaps the database layer underneath the game's own code; every artifact (the
+provider surface, the patch, the database) is derived from NASCAR's own 2008 build.
 
 ---
 
@@ -20,7 +20,7 @@ gcroot<System::Data::SqlClient::SqlDataAdapter __gc *>
 ```
 
 That means the SQL Server dependency lives entirely in **metadata type references**, not in
-native code. So we do not rewrite a single instruction:
+native code. So not a single instruction is rewritten:
 
 1. **`GvrSqlite.dll`** — a small provider that mirrors exactly the SqlClient member surface
    PLUSDE calls (`GvrConnection`, `GvrCommand`, `GvrDataAdapter`, `GvrParameter`,
@@ -42,8 +42,7 @@ are redirected.
 
 The OEM ships the schema encrypted (`NASCARcabinet.enc`, `NASCARcabinet_Content.enc`,
 `NASCARcabinetXml.enc` — Base64 over AES-128-CBC, PKCS#7). **GlobalVR reused the same
-key/IV across titles**, so the NFSU derivation works unchanged — verified on NASCAR's 2008
-media. `Tools\Decrypt-GvrEnc.ps1` does it with nothing but .NET's built-in AES:
+key/IV across titles**, and it works unchanged on NASCAR's 2008 media. `Tools\Decrypt-GvrEnc.ps1` does it with nothing but .NET's built-in AES:
 
 | File | Decrypted | Contents |
 |---|---|---|
@@ -51,8 +50,7 @@ media. `Tools\Decrypt-GvrEnc.ps1` does it with nothing but .NET's built-in AES:
 | `NASCARcabinet_Content.enc` | 64,218 B | 366 seed rows (tracks, drivers, lookups, cabinet config) |
 | `NASCARcabinetXml.enc` | 457,403 B | object/XML mapping + the SQL Server connection string |
 
-Note the connection string never has to be re-encrypted (unlike the NFSU SQL-Express
-repoint route): the provider ignores it and resolves the database path itself.
+Note the connection string never has to be re-encrypted: the provider ignores it and resolves the database path itself.
 
 ## The stored-proc surface
 
@@ -103,10 +101,9 @@ cd D:\NFSU_GVR\NASCAR
 Which runs the whole chain: decrypt schema → build `game.db` → compile the provider →
 patch `PLUSDE.dll` → stage `Deploy\` → run the functional test.
 
-This machine has the **real .NET 1.1 compiler** (`C:\Windows\Microsoft.NET\Framework\v1.1.4322\csc.exe`),
-so the provider is compiled directly for the runtime the game uses. On a box without it the
-script falls back to the 2.0 compiler plus a dnlib metadata retarget to `v1.1.4322` — the
-route the NFSU project had to take.
+When the **real .NET 1.1 compiler** (`C:\Windows\Microsoft.NET\Framework\v1.1.4322\csc.exe`)
+is present, the provider is compiled directly for the runtime the game uses. On a box without
+it the script falls back to the 2.0 compiler plus a dnlib metadata retarget to `v1.1.4322`.
 
 Output in `NASCAR\Deploy\`:
 
@@ -133,22 +130,21 @@ leaderboards and operator settings.
 
 > **Log off and back on after installing.** Processes inherit environment variables from the
 > Explorer session that launched them; a shell started from a pre-existing Explorer will not
-> see `GVRSQLITE_DB_NAS1`. This exact trap cost the NFSU project a debugging session where a
-> working install looked like a hang.
+> see `GVRSQLITE_DB_NAS1`, and a working install then looks like a hang.
 
 ### Why a per-title environment variable
 
 The provider resolves the database in this order:
 
 1. `GVRSQLITE_DB_NAS1` (NASCAR-specific)
-2. `GVRSQLITE_DB` (what the NFSU install sets)
+2. `GVRSQLITE_DB` (the generic variable, which another title's install may set)
 3. `HKLM\SOFTWARE\Gvr\Plus\1.1\Cabinet\PlusSchemaPath` → `<GvrPlus>\game.db`
 4. `C:\GvrPlus\game.db`, then `game.db` beside `GvrSqlite.dll`
 
-Step 1 exists because `GVRSQLITE_DB` is machine-wide: on this development box it already
-points at `D:\Games\NFSU\Underground\GVR\GvrPlus\game.db`, and without the per-title
-variable a NASCAR install would silently open NFSU's database (it did, during testing —
-`no such table: Tracks_NAS1`). With it, both titles coexist.
+Step 1 exists because `GVRSQLITE_DB` is machine-wide: when another GlobalVR title on the
+same PC has set it to its own `game.db`, a NASCAR install without the per-title variable
+silently opens that title's database (the symptom is `no such table: Tracks_NAS1`). With it,
+both titles coexist.
 
 ## Verification
 
@@ -168,9 +164,9 @@ PASS  SP_GetSet_CabinetLeaderboard_NAS1  [120 rows]
 
 The patcher also runs its own **pre-flight**: it enumerates every member PLUSDE references
 on the swapped types (37 distinct) and refuses to patch unless the provider implements all
-of them. NASCAR's 2008 build needed four members NFSU's never used —
+of them. Four of those members are specific to NASCAR's 2008 build —
 `GvrCommand.ExecuteScalar`, `GvrCommand.CommandTimeout`, `GvrError.Message`,
-`GvrException.Message` — all added.
+`GvrException.Message` — and are all implemented.
 
 ## Known boundaries
 
@@ -180,9 +176,9 @@ of them. NASCAR's 2008 build needed four members NFSU's never used —
   exist. Nothing in a standalone install should reach them. If something does, it will throw
   a normal .NET type/connection error rather than fail silently; patching them would mean
   implementing `SqlDataReader` too.
-* **Untranslated T-SQL fails loudly, not silently.** That is deliberate: the NFSU project
-  lost time to a `SELECT TOP n` that silently returned zero rows and made every frontend car
-  render white. Set `GVRSQLITE_LOG=1` to log every statement the provider executes — that is
+* **Untranslated T-SQL fails loudly, not silently.** That is deliberate: a statement that
+  silently returns zero rows (an untranslated `SELECT TOP n`, for example) surfaces as an
+  unrelated frontend symptom instead of a database error. Set `GVRSQLITE_LOG=1` to log every statement the provider executes — that is
   how you find the next dialect gap.
 * This is the database layer only. It does **not** address the dongle check that currently
   stops `NASCAR_GVR.exe` at startup (`NASCAR_FINDINGS.md` §5).
@@ -196,5 +192,5 @@ of them. NASCAR's 2008 build needed four members NFSU's never used —
 | `Tools\Build-NascarSqliteDb.py` | schema → SQLite, seeding and provisioning |
 | `Tools\Patch-PlusdeToSqlite.ps1` | dnlib typeref swap + pre-flight + verify |
 | `Tools\Test-GvrSqlite.ps1`, `TestGvrSqlite.cs` | functional test |
-| `..\GvrSqlite\GvrSqlite.cs` | the provider source, shared with the NFSU project |
+| `src\GvrSqlite\GvrSqlite.cs` | the provider source |
 | `Deploy\` | the four files the installer consumes |

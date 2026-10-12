@@ -14,6 +14,16 @@
 //  read with our OWN IDirectInput8 - which shares DirectInput's vtables with
 //  GvrIO's, so GvrIOPad.cpp's GetDeviceState hook must skip it (wheel_owns).
 //
+//  Pedals (Gas / Brake / Pedals = auto, the default): the wheel's USB vendor:product
+//  ID picks a preset (g_presets) - which axis is gas and which is brake, and whether
+//  both pedals share ONE axis (a Logitech wheel without Logitech G HUB / Gaming
+//  Software is 046d:c294, pedals combined on Y). An unknown wheel gets gas = Rz,
+//  brake = Y (Logitech's Windows order), and a pedal axis that rests in the MIDDLE
+//  is taken as combined. Each pedal's released position is learned from the
+//  wheel's first real report - DirectInput shows every axis at its middle until
+//  then - and full = the far end of the axis from there. SwapPedals swaps gas and
+//  brake on any layout.
+//
 //  Force feedback - [Wheel] ForceFeedback:
 //    arcade (default)  the OEM GvrIO plug-in Steering.dll does it, exactly as on the
 //                      cabinet: it opens any attached force-feedback DI8DEVTYPE_DRIVING
@@ -59,9 +69,18 @@ static HWND  g_coopWnd = NULL;                // window the cooperative level is
 static bool  g_acquired = false;
 
 // ---------------------------------------------------------------- settings ([Wheel])
-enum { AX_X, AX_Y, AX_Z, AX_RX, AX_RY, AX_RZ, AX_S0, AX_S1, AX_NONE };
-static int   g_axSteer = AX_X, g_axGas = AX_Y, g_axBrake = AX_RZ;
+enum { AX_X, AX_Y, AX_Z, AX_RX, AX_RY, AX_RZ, AX_S0, AX_S1, AX_NONE, AX_AUTO = -2 };
+enum { PD_AUTO, PD_SEPARATE, PD_COMBINED };
+static int   g_axSteer = AX_X, g_axGas = AX_AUTO, g_axBrake = AX_AUTO;   // as set in [Wheel]
+static int   g_pedalsCfg = PD_AUTO;
+static bool  g_swapPedals = false;
+static bool  g_oldDefault = false;            // the v1.0.9 template's Gas = y / Brake = rz, ignored
+// the pedal layout in use for the attached wheel ([Wheel] settings, else its preset, else defaults)
+static int   g_useGas = AX_RZ, g_useBrake = AX_Y;
 static bool  g_combined = false;              // one pedal axis: gas one way, brake the other
+static bool  g_gasDown = true;                // combined: gas pulls the axis down
+static bool  g_combinedAuto = false;          // may still switch to combined if an axis rests mid
+static unsigned g_axPresent = 0;              // bit per AX_ the wheel really has
 static int   g_rotation = 0, g_range = 900;   // 0 = use the wheel's own range (no scaling)
 static int   g_deadzone = 2;                  // % of half range, steering
 static int   g_pedalDead = 4;                 // % of full range, pedals
@@ -73,13 +92,19 @@ static char  g_devFilter[64] = "";
 static int   g_ffbGain = 100, g_ffbSpring = 40, g_ffbDamper = 40, g_ffbForce = 100;
 static bool  g_ffbOn = false;                 // true only for ForceFeedback = shim
 
-static int axis_of(const char* s, int def)
+static const char* s_axName[9] = { "x", "y", "z", "rx", "ry", "rz", "slider0", "slider1", "none" };
+
+static int axis_of(const char* key, const char* s, int def)
 {
-    static const char* n[] = { "x", "y", "z", "rx", "ry", "rz", "slider0", "slider1", "none" };
-    for (int i = 0; i < 9; ++i) if (_stricmp(s, n[i]) == 0) return i;
+    for (int i = 0; i < 9; ++i) if (_stricmp(s, s_axName[i]) == 0) return i;
     if (_stricmp(s, "slider") == 0) return AX_S0;
+    if (_stricmp(s, "auto") == 0 && def == AX_AUTO) return AX_AUTO;
+    shim_log("wheel cfg: %s = '%s' is not an axis (x y z rx ry rz slider0 slider1%s) - ignored",
+             key, s, def == AX_AUTO ? " auto" : "");
     return def;
 }
+
+static const char* ax_name(int ax) { return ax >= 0 && ax < 9 ? s_axName[ax] : "auto"; }
 
 static void load_wheel_config(void)
 {
@@ -98,10 +123,21 @@ static void load_wheel_config(void)
     #define S(key, def) (GetPrivateProfileStringA("Wheel", key, def, v, sizeof v, ini), v)
     if (_stricmp(S("Enabled", "true"), "false") == 0 || strcmp(v, "0") == 0) g_woff = true;
     lstrcpynA(g_devFilter, S("Device", ""), sizeof g_devFilter);
-    g_axSteer = axis_of(S("Steering", "x"), AX_X);
-    g_axGas   = axis_of(S("Gas", "y"), AX_Y);
-    g_axBrake = axis_of(S("Brake", "rz"), AX_RZ);
-    g_combined = _stricmp(S("Pedals", "separate"), "combined") == 0;
+    g_axSteer = axis_of("Steering", S("Steering", "x"), AX_X);
+    g_axGas   = axis_of("Gas", S("Gas", "auto"), AX_AUTO);
+    g_axBrake = axis_of("Brake", S("Brake", "auto"), AX_AUTO);
+    S("Pedals", "auto");
+    g_pedalsCfg = _stricmp(v, "combined") == 0 ? PD_COMBINED : _stricmp(v, "separate") == 0 ? PD_SEPARATE : PD_AUTO;
+    if (g_pedalsCfg == PD_AUTO && _stricmp(v, "auto") != 0)
+        shim_log("wheel cfg: Pedals = '%s' - use auto, separate or combined", v);
+    // Up to v1.0.9 every nascar_settings.ini got Gas = y / Brake = rz / Pedals = separate - the
+    // old default, backwards for Logitech wheels on Windows - and updates keep the player's
+    // values. That exact set is not a choice anyone made: treat it as auto.
+    if (g_axGas == AX_Y && g_axBrake == AX_RZ && g_pedalsCfg != PD_COMBINED) {
+        g_axGas = g_axBrake = AX_AUTO; g_pedalsCfg = PD_AUTO; g_oldDefault = true;
+    }
+    S("SwapPedals", "false");
+    g_swapPedals = _stricmp(v, "true") == 0 || strcmp(v, "1") == 0;
     g_rotation = atoi(S("Rotation", "0"));
     g_range    = atoi(S("DeviceRange", "900"));
     g_deadzone = atoi(S("SteeringDeadZone", "2"));
@@ -124,8 +160,11 @@ static void load_wheel_config(void)
             shim_log("wheel cfg: Button%d = '%s' is not a pad button name - ignored", i, v);
     }
     #undef S
-    shim_log("wheel cfg: steer=%d gas=%d brake=%d %s rotation=%d/%d force feedback=%s (gain=%d spring=%d damper=%d)",
-             g_axSteer, g_axGas, g_axBrake, g_combined ? "combined" : "separate", g_rotation, g_range,
+    shim_log("wheel cfg: steer=%s gas=%s brake=%s pedals=%s%s%s rotation=%d/%d force feedback=%s (gain=%d spring=%d damper=%d)",
+             ax_name(g_axSteer), ax_name(g_axGas), ax_name(g_axBrake),
+             g_pedalsCfg == PD_COMBINED ? "combined" : g_pedalsCfg == PD_SEPARATE ? "separate" : "auto",
+             g_swapPedals ? " swapped" : "", g_oldDefault ? " (old Gas = y / Brake = rz default ignored)" : "",
+             g_rotation, g_range,
              g_ffbOn ? "shim" : "arcade/off - ours not used", g_ffbGain, g_ffbSpring, g_ffbDamper);
 }
 
@@ -222,7 +261,7 @@ void wheel_set_force(int force, int springPct)
 }
 
 // ---------------------------------------------------------------- discovery
-struct FindCtx { GUID guid; char name[MAX_PATH]; bool found; bool ffb; };
+struct FindCtx { GUID guid; DWORD product; char name[MAX_PATH]; bool found; bool ffb; };
 
 static BOOL CALLBACK enum_cb(LPCDIDEVICEINSTANCEA d, LPVOID p)
 {
@@ -233,11 +272,15 @@ static BOOL CALLBACK enum_cb(LPCDIDEVICEINSTANCEA d, LPVOID p)
                                 : type == DI8DEVTYPE_DRIVING;
     if (!match) return DIENUM_CONTINUE;
     c->guid = d->guidInstance;
+    c->product = d->guidProduct.Data1;            // MAKELONG(vendor, product) for USB devices
     lstrcpynA(c->name, d->tszProductName, sizeof c->name);
     c->found = true;
     return DIENUM_STOP;
 }
 
+// Every axis reports 0..65535 over its WHOLE travel: no dead zone, and saturation 100 % - a
+// lower saturation (left in Windows' game controller settings) reads full before the pedal
+// is down.
 static void set_range(DWORD ofs)
 {
     DIPROPRANGE r; r.diph.dwSize = sizeof r; r.diph.dwHeaderSize = sizeof r.diph;
@@ -246,6 +289,93 @@ static void set_range(DWORD ofs)
     DIPROPDWORD dz; dz.diph.dwSize = sizeof dz; dz.diph.dwHeaderSize = sizeof dz.diph;
     dz.diph.dwObj = ofs; dz.diph.dwHow = DIPH_BYOFFSET; dz.dwData = 0;
     g_dev->SetProperty(DIPROP_DEADZONE, &dz.diph);
+    dz.dwData = 10000;
+    g_dev->SetProperty(DIPROP_SATURATION, &dz.diph);
+}
+
+// Pedal layouts by USB vendor:product (LOWORD = vendor, HIWORD = product, as DIPROP_VIDPID).
+// gear1 = DirectInput button of the H-shifter's 1st gear (-1: none known); 2nd..6th follow.
+// sure = false: from Linux driver data, not yet confirmed on Windows (the log says so).
+#define VP(v, p) ((DWORD)MAKELONG(0x##v, 0x##p))
+struct WheelPreset { DWORD id; const char* name; int gas, brake; bool combined; int gear1; bool sure; };
+static const WheelPreset g_presets[] = {
+    // Logitech without G HUB / Gaming Software: DFGT, G25, G27 report as this "Driving Force EX",
+    // gas and brake on Y, resting in the middle; gas pulls it down.
+    { VP(046d, c294), "Logitech wheel in compatibility mode", AX_Y,  AX_Y,  true,  -1, true },
+    // Logitech native mode: brake Y, gas Rz, clutch a slider
+    { VP(046d, c29a), "Logitech Driving Force GT",            AX_RZ, AX_Y,  false, -1, true },
+    { VP(046d, c298), "Logitech Driving Force Pro",           AX_RZ, AX_Y,  false, -1, true },
+    { VP(046d, c299), "Logitech G25",                         AX_RZ, AX_Y,  false, -1, true },
+    { VP(046d, c29b), "Logitech G27",                         AX_RZ, AX_Y,  false,  8, true },
+    { VP(046d, c24f), "Logitech G29",                         AX_RZ, AX_Y,  false, 12, true },
+    { VP(046d, c262), "Logitech G920",                        AX_RZ, AX_Y,  false, 13, true },
+    { VP(046d, c266), "Logitech G923 (PlayStation)",          AX_RZ, AX_Y,  false, 12, true },
+    { VP(046d, c26e), "Logitech G923 (Xbox)",                 AX_RZ, AX_Y,  false, 13, true },
+    // Thrustmaster: the layout depends on the wheel's mode (PS3 / PS4 switch)
+    { VP(044f, b66e), "Thrustmaster T300RS (PS3 mode)",       AX_Z,  AX_RZ, false, -1, false },
+    { VP(044f, b66d), "Thrustmaster T300RS (PS4 mode)",       AX_Y,  AX_Z,  false, -1, false },
+    { VP(044f, b664), "Thrustmaster TX",                      AX_Z,  AX_RZ, false, -1, false },
+};
+#undef VP
+
+// Pedal reading state (see wheel_read); reset for every newly found wheel.
+struct PedalState { long rest; unsigned logged; };
+static PedalState g_pg, g_pb;                 // gas, brake (combined: g_pg holds the axis' rest)
+static bool  g_realReport = false;            // the wheel has sent a report of its own
+static long  g_axStart[8]; static bool g_axHave, g_axLogged[8];
+
+static void pedals_reset(void)
+{
+    g_pg.rest = g_pb.rest = -1; g_pg.logged = g_pb.logged = 0;
+    g_realReport = false; g_axHave = false;
+    memset(g_axLogged, 0, sizeof g_axLogged);
+}
+
+// Under g_wcs: decide the pedal layout for the wheel just found.
+static void choose_layout(DWORD id, const char* devName)
+{
+    const WheelPreset* p = NULL;
+    for (size_t i = 0; i < sizeof g_presets / sizeof g_presets[0]; ++i)
+        if (g_presets[i].id == id) { p = &g_presets[i]; break; }
+    int gas = AX_RZ, brake = AX_Y;
+    bool comb = false;
+    const char* from = "default - not a known model";
+    if (p) { gas = p->gas; brake = p->brake; comb = p->combined; from = p->name; }
+    else if ((g_axPresent & (1u << AX_Y)) && !(g_axPresent & ((1u << AX_Z) | (1u << AX_RZ)))) {
+        gas = brake = AX_Y; comb = true; from = "Y is its only pedal axis";
+    }
+    if (g_pedalsCfg != PD_AUTO) {
+        bool want = g_pedalsCfg == PD_COMBINED;
+        if (want && !comb) gas = AX_Y;               // the usual combined axis
+        comb = want;
+    }
+    if (g_axGas != AX_AUTO) gas = g_axGas;
+    if (g_axBrake != AX_AUTO && !comb) brake = g_axBrake;
+    if (comb) brake = gas;
+    else if (g_swapPedals) { int t = gas; gas = brake; brake = t; }
+    g_useGas = gas; g_useBrake = brake; g_combined = comb;
+    g_gasDown = !g_swapPedals;
+    // an unknown or unconfirmed layout may still turn out to be one combined axis
+    g_combinedAuto = g_pedalsCfg == PD_AUTO && !comb && (!p || !p->sure);
+    if (comb)
+        shim_log("wheel: pedals combined on '%s', gas pulls it %s (%s)", ax_name(gas),
+                 g_gasDown ? "down" : "up", from);
+    else
+        shim_log("wheel: pedals gas = '%s', brake = '%s'%s (%s)%s", ax_name(gas), ax_name(brake),
+                 g_swapPedals ? " (swapped)" : "", from,
+                 p && !p->sure ? " - layout not yet confirmed on Windows: if gas brakes, set [Wheel] SwapPedals = true" : "");
+
+    // H-shifter gears are buttons: gear 1..6 (the arcade shifter has 4 positions: 5th, 6th = 4th)
+    int g1 = p ? p->gear1 : -1;
+    if (!p && (strstr(devName, "G29") || strstr(devName, "G923"))) g1 = 12;
+    if (!p && strstr(devName, "G920")) g1 = 13;
+    if (g1 >= 0) {
+        static const char* gears[6] = { "gear1", "gear2", "gear3", "gear4", "gear4", "gear4" };
+        for (int i = 0; i < 6; ++i)
+            if (!g_btnUser[g1 + i]) g_btnMap[g1 + i] = pad_button_bit(gears[i]);
+        shim_log("wheel: H-shifter defaults - buttons %d..%d = gear 1, 2, 3, 4, 4, 4 ([Wheel] ButtonN overrides)",
+                 g1, g1 + 5);
+    }
 }
 
 // Discovery thread, every ~1.5 s while there is no wheel.
@@ -277,24 +407,30 @@ void wheel_discover(void)
     if (FAILED(dev->SetDataFormat(&c_dfDIJoystick2))) { dev->Release(); return; }
     DIDEVCAPS caps; caps.dwSize = sizeof caps;
     bool ffb = SUCCEEDED(dev->GetCapabilities(&caps)) && (caps.dwFlags & DIDC_FORCEFEEDBACK);
+    DIPROPDWORD vp; vp.diph.dwSize = sizeof vp; vp.diph.dwHeaderSize = sizeof vp.diph;
+    vp.diph.dwObj = 0; vp.diph.dwHow = DIPH_DEVICE; vp.dwData = 0;
+    DWORD id = SUCCEEDED(dev->GetProperty(DIPROP_VIDPID, &vp.diph)) && vp.dwData ? vp.dwData : c.product;
 
     EnterCriticalSection(&g_wcs);
     g_dev = dev; g_ffb = ffb; g_coopWnd = NULL; g_acquired = false;
     lstrcpynA(g_name, c.name, sizeof g_name);
     static const DWORD ofs[8] = { DIJOFS_X, DIJOFS_Y, DIJOFS_Z, DIJOFS_RX, DIJOFS_RY, DIJOFS_RZ,
                                   DIJOFS_SLIDER(0), DIJOFS_SLIDER(1) };
-    for (int i = 0; i < 8; ++i) set_range(ofs[i]);
-    LeaveCriticalSection(&g_wcs);
-    shim_log("wheel: '%s' found (%lu axes, %lu buttons, force feedback %s)", c.name,
-             caps.dwAxes, caps.dwButtons, ffb ? "yes" : "no");
-    // Logitech G29 / G920 / G923: the Driving Force Shifter reports its gears as buttons 12..17
-    // (gear 1..6) and 18 (reverse). The arcade shifter has 4 positions: 5th and 6th = 4th.
-    if (strstr(c.name, "G29") || strstr(c.name, "G920") || strstr(c.name, "G923")) {
-        static const char* gears[6] = { "gear1", "gear2", "gear3", "gear4", "gear4", "gear4" };
-        for (int i = 0; i < 6; ++i)
-            if (!g_btnUser[12 + i]) g_btnMap[12 + i] = pad_button_bit(gears[i]);
-        shim_log("wheel: H-shifter defaults - buttons 12..17 = gear 1, 2, 3, 4, 4, 4 ([Wheel] ButtonN overrides)");
+    char axes[64] = "";
+    g_axPresent = 0;
+    for (int i = 0; i < 8; ++i) {
+        DIDEVICEOBJECTINSTANCEA oi; oi.dwSize = sizeof oi;
+        if (SUCCEEDED(dev->GetObjectInfo(&oi, ofs[i], DIPH_BYOFFSET))) {
+            g_axPresent |= 1u << i;
+            strcat(axes, " "); strcat(axes, s_axName[i]);
+        }
+        set_range(ofs[i]);
     }
+    shim_log("wheel: '%s' found (%04x:%04x, %lu axes:%s, %lu buttons, force feedback %s)", c.name,
+             LOWORD(id), HIWORD(id), caps.dwAxes, axes, caps.dwButtons, ffb ? "yes" : "no");
+    pedals_reset();
+    choose_layout(id, c.name);
+    LeaveCriticalSection(&g_wcs);
 }
 
 bool wheel_owns(void* device)
@@ -350,18 +486,88 @@ static long axis_val(const DIJOYSTATE2& s, int ax)
     return -1;
 }
 
-// A pedal's resting value is learned from the first reading (pedals are untouched at start):
-// some wheels report a released pedal as 0, others as 65535. Output = travel from rest.
-static long g_restGas = -1, g_restBrake = -1;
-
-static int pedal(long raw, long rest)
+// Pedal value 0..255 for `travel` out of the `span` from released to fully down.
+static int pedal(long travel, long span)
 {
-    if (raw < 0 || rest < 0) return 0;
-    long travel = raw > rest ? raw - rest : rest - raw;
-    long dead = 65535L * g_pedalDead / 100;
-    if (travel <= dead) return 0;
-    long v = (travel - dead) * 255 / (65535 - dead);
+    long dead = span * g_pedalDead / 100;
+    if (travel <= dead || span - dead <= 0) return 0;
+    long v = (travel - dead) * 255 / (span - dead);
     return v > 255 ? 255 : (int)v;
+}
+
+static bool mid_band(long v) { return v > 65535 / 4 && v < 65535 / 4 * 3; }
+
+// What a pedal really does, once: the raw value at 50 %, 90 % and 100 %.
+static void pedal_log(PedalState& p, const char* what, int v, int ax, long raw, long rest)
+{
+    static const int th[3] = { 128, 230, 255 }, pc[3] = { 50, 90, 100 };
+    for (int i = 0; i < 3; ++i)
+        if (v >= th[i] && !(p.logged & (1u << i))) {
+            p.logged |= 1u << i;
+            shim_log("wheel: %s at %d%% (axis '%s' = %ld, released = %ld)", what, pc[i], ax_name(ax), raw, rest);
+        }
+}
+
+// A separate pedal rests at one END of its axis (Logitech: 65535 released, 0 down; others the
+// other way round). Its released value is learned from the wheel's first real report and
+// follows the pedal if it later reads more released than that (a pedal touched at start-up).
+static int separate_pedal(PedalState& p, long raw, int ax, const char* what)
+{
+    if (raw < 0) return 0;
+    if (p.rest < 0) { p.rest = raw; shim_log("wheel: %s pedal released at %ld (axis '%s')", what, raw, ax_name(ax)); }
+    long down = p.rest >= 32768 ? 0 : 65535;   // the fully pressed end
+    if (labs(raw - down) > labs(p.rest - down)) p.rest = raw;
+    int v = pedal(labs(raw - p.rest), labs(down - p.rest));
+    pedal_log(p, what, v, ax, raw, p.rest);
+    return v;
+}
+
+// Before the wheel's first report DirectInput shows every axis at its middle (32767 / 32768),
+// which is no pedal's real released position: learn nothing until a real value shows up.
+static bool real_report(const DIJOYSTATE2& s)
+{
+    if (!g_axPresent) return true;
+    for (int i = 0; i < 8; ++i)
+        if ((g_axPresent & (1u << i)) && labs(axis_val(s, i) - 32767) > 1) return true;
+    for (int i = 0; i < 32; ++i) if (s.rgbButtons[i] & 0x80) return true;
+    return LOWORD(s.rgdwPOV[0]) != 0xFFFF;
+}
+
+// Under g_wcs: the pedals' 0..255 from one reading.
+static void read_pedals(const DIJOYSTATE2& s, int* gas, int* brake)
+{
+    *gas = *brake = 0;
+    if (!g_realReport) {
+        if (!real_report(s)) return;
+        g_realReport = true;
+    }
+    if (g_combinedAuto) {
+        // unknown layout: a pedal axis that rests in the middle is both pedals on one axis
+        g_combinedAuto = false;
+        long g = axis_val(s, g_useGas), b = axis_val(s, g_useBrake);
+        int ax = mid_band(b) ? g_useBrake : mid_band(g) ? g_useGas : -1;
+        if (ax >= 0) {
+            g_combined = true; g_useGas = g_useBrake = ax;
+            shim_log("wheel: axis '%s' rests in the middle (%ld) - pedals combined on it, gas pulls it %s",
+                     ax_name(ax), axis_val(s, ax), g_gasDown ? "down" : "up");
+        }
+    }
+    if (g_combined) {
+        long y = axis_val(s, g_useGas);
+        if (y < 0) return;
+        if (g_pg.rest < 0) {
+            g_pg.rest = mid_band(y) ? y : 32767;
+            shim_log("wheel: combined pedals released at %ld (axis '%s' reads %ld)", g_pg.rest, ax_name(g_useGas), y);
+        }
+        long r = g_pg.rest;
+        bool down = y < r;
+        int v = pedal(labs(y - r), down ? r : 65535 - r);
+        if (down == g_gasDown) { *gas = v;   pedal_log(g_pg, "gas", v, g_useGas, y, r); }
+        else                   { *brake = v; pedal_log(g_pb, "brake", v, g_useGas, y, r); }
+    } else {
+        *gas   = separate_pedal(g_pg, axis_val(s, g_useGas), g_useGas, "gas");
+        *brake = separate_pedal(g_pb, axis_val(s, g_useBrake), g_useBrake, "brake");
+    }
 }
 
 bool wheel_read(int* steer, int* gas, int* brake, unsigned* buttons)
@@ -378,19 +584,19 @@ bool wheel_read(int* steer, int* gas, int* brake, unsigned* buttons)
             if (hr == DIERR_INPUTLOST || hr == DIERR_NOTACQUIRED) { g_acquired = false; ffb_release(); }
         }
         if (SUCCEEDED(hr)) {
+            read_pedals(s, gas, brake);
             // Which axis is which differs per wheel and driver: log each axis once, the first time
-            // it moves well away from where it started (its name is what [Wheel] Gas / Brake take).
-            static long s_axStart[8]; static bool s_axHave = false, s_axLogged[8];
-            static const char* s_axName[8] = { "x", "y", "z", "rx", "ry", "rz", "slider0", "slider1" };
-            for (int i = 0; i < 8; ++i) {
+            // it moves well away from where it was at the wheel's first real report (its name is
+            // what [Wheel] Gas / Brake take).
+            for (int i = 0; g_realReport && i < 8; ++i) {
                 long v = axis_val(s, i);
-                if (!s_axHave) { s_axStart[i] = v; continue; }
-                if (!s_axLogged[i] && labs(v - s_axStart[i]) > 13000) {
-                    s_axLogged[i] = true;
-                    shim_log("wheel: axis '%s' moves (from %ld to %ld)", s_axName[i], s_axStart[i], v);
+                if (!g_axHave) { g_axStart[i] = v; continue; }
+                if (!g_axLogged[i] && labs(v - g_axStart[i]) > 13000) {
+                    g_axLogged[i] = true;
+                    shim_log("wheel: axis '%s' moves (from %ld to %ld)", s_axName[i], g_axStart[i], v);
                 }
             }
-            s_axHave = true;
+            if (g_realReport) g_axHave = true;
             // steering: centre 32768 -> -127..127, optional rotation scaling and dead zone
             double x = (axis_val(s, g_axSteer) - 32768) / 32768.0;
             if (g_rotation > 0 && g_range > g_rotation) x *= (double)g_range / g_rotation;
@@ -398,17 +604,6 @@ bool wheel_read(int* steer, int* gas, int* brake, unsigned* buttons)
             a = a <= dz ? 0 : (a - dz) / (1 - dz);
             if (a > 1) a = 1;
             *steer = (int)(a * 127 + 0.5) * (x < 0 ? -1 : 1);
-            if (g_combined) {
-                long y = axis_val(s, g_axGas);
-                if (g_restGas < 0) g_restGas = y;
-                *gas   = y < g_restGas ? pedal(y, g_restGas) : 0;    // combined: gas pulls the axis down
-                *brake = y > g_restGas ? pedal(y, g_restGas) : 0;
-            } else {
-                long g = axis_val(s, g_axGas), b = axis_val(s, g_axBrake);
-                if (g_restGas < 0)   { g_restGas = g;   shim_log("wheel: gas pedal rest %ld", g); }
-                if (g_restBrake < 0) { g_restBrake = b; shim_log("wheel: brake pedal rest %ld", b); }
-                *gas = pedal(g, g_restGas); *brake = pedal(b, g_restBrake);
-            }
             unsigned ub = 0;
             static unsigned prevRaw = 0;
             unsigned raw = 0;

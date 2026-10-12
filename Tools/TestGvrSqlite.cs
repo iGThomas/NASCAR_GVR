@@ -55,7 +55,7 @@ class TestGvrSqlite
         c.Open();
         Check("connection opens", c.State == ConnectionState.Open, "state=" + c.State);
 
-        // 1. ExecuteScalar (NASCAR's PLUSDE uses it; NFSU's build never did)
+        // 1. ExecuteScalar (NASCAR's PLUSDE build uses it)
         GvrCommand sc = new GvrCommand("SELECT COUNT(*) FROM Tracks_NAS1", c);
         object n = sc.ExecuteScalar();
         Check("ExecuteScalar COUNT(*) Tracks_NAS1", n != null && Convert.ToInt64(n) == 28, "got " + n);

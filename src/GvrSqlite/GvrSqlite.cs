@@ -311,11 +311,10 @@ namespace GvrSqlite
         // <dir of this dll>\game.db. Supports "Initial Catalog=<path-or-name>".
         private string ResolveDbPath()
         {
-            // Shared DB for both the cabinet (UndergroundGVR.exe) and shell
-            // (UniverShell2.exe) processes: a fixed absolute path wins so they
-            // never diverge into per-folder databases.
-            // Per-title override, checked first so a NASCAR install and an NFSU
-            // install can coexist on one machine: GVRSQLITE_DB is machine-wide and
+            // Shared DB for both the race and the shell processes: a fixed
+            // absolute path wins so they never diverge into per-folder databases.
+            // Per-title override, checked first so a NASCAR install and another
+            // GVR title's install can coexist on one machine: GVRSQLITE_DB is machine-wide and
             // whichever title set it last would otherwise capture both.
             string game = Environment.GetEnvironmentVariable("GVRSQLITE_DB_NAS1");
             if (game != null && game.Length > 0) return game;
@@ -454,7 +453,7 @@ namespace GvrSqlite
         public GvrParameterCollection Parameters { get { return _params; } }
         // SQLite has no per-command server timeout; accepted and ignored so the
         // caller's SqlCommand.CommandTimeout assignment still binds. (NASCAR's
-        // PLUSDE sets this; NFSU's build never did.)
+        // PLUSDE sets this.)
         private int _timeout = 30;
         public int CommandTimeout { get { return _timeout; } set { _timeout = value; } }
 

@@ -18,11 +18,10 @@ python Tools\Dump-Hive.py <hive> --find RUNTIMEOEM
 
 ---
 
-## 1. The OEM-revision gate (the NASCAR equivalent of the NFSU value)
+## 1. The OEM-revision gate
 
-This is the value the OEM `Setup.exe` checks before it will install anything. NFSU's is
-`NFS - UG,XP Embedded,HW Rev 865 e,05052005`; NASCAR's, read from
-`HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment`:
+This is the value the OEM `Setup.exe` checks before it will install anything. NASCAR's, read
+from `HKLM\SYSTEM\CurrentControlSet\Control\Session Manager\Environment`:
 
 | Name | Type | Value |
 |---|---|---|
@@ -31,7 +30,8 @@ This is the value the OEM `Setup.exe` checks before it will install anything. NF
 
 Present identically in `ControlSet001` and `ControlSet002`.
 
-Same grammar as NFSU: `<Product>,XP Embedded,HW Rev <hardware revision>,<MMDDYYYY>`.
+The grammar is `<Product>,XP Embedded,HW Rev <hardware revision>,<MMDDYYYY>`, the same across
+GlobalVR's XP-Embedded cabinets.
 `945-G31` is the Intel 945 board / G31 chipset cabinet revision (it also appears in the
 recovery disc's `GVR\GVRPESHL.INI` as `HwRev=945-G31`), and `08252008` is the image build
 date — one day before the `ReleaseDate=08/26/2008` in that same INI.
@@ -54,7 +54,7 @@ just `RUNTIMEOEMREV`. The installer here can write them for you:
 .\Install-NASCAR-GVR-Portable.ps1 -SetOemRev
 ```
 
-**You do not need this for our install.** `Install-NASCAR-GVR-Portable.ps1` copies the
+**You do not need this for the portable install.** `Install-NASCAR-GVR-Portable.ps1` copies the
 payload directly and never runs the OEM installer, and `NASCAR_GVR.exe` itself contains no
 `RUNTIMEOEMREV` string — the gate is purely an installer-side check. `-SetOemRev` exists for
 the case where you deliberately want to run the OEM flow (and everything in
@@ -102,7 +102,7 @@ What the image *does* add is the cabinet OS layer below, which the discs never s
 |---|---|
 | `AutoAdminLogon` | `1` |
 | `DefaultUserName` / `AltDefaultUserName` | `cabinet` |
-| `Shell` | `Explorer.exe` (the cabinet keeps Explorer and hides it, rather than replacing the shell as NFSU does) |
+| `Shell` | `Explorer.exe` (the cabinet keeps Explorer and hides it rather than replacing the shell) |
 | `AutoRestartShell` | `1` |
 
 (`DefaultPassword` is in the hive too if you ever need to log into a restored cabinet.)
@@ -116,7 +116,7 @@ What the image *does* add is the cabinet OS layer below, which the discs never s
 | + audio vendor entries | `HDAShCut.exe`, `RTHDCPL.EXE`, `Alcmtr.exe`, `cmicnfg.cpl`, `TweakUI` |
 
 `Startup.reg` on the game disc *adds* `GVRHercules = c:\hercules\gvrboot.exe` on top of these.
-None of the three GVR entries are reproduced by our installer — see
+None of the three GVR entries are reproduced by the installer — see
 `NASCAR_INSTALL_ANALYSIS.md`.
 
 The rest of the image's autostart surface — `RunOnce\CDS`, `SetupExecute`, the Startup folder,
@@ -137,7 +137,7 @@ dongle blocker (`NASCAR_FINDINGS.md` §5) involves:
 
 All five driver binaries (plus `aksclass.sys`) are present in the image, and the installer
 package for them is `!Drivers\HASP\hdd32.exe`. Installing them does **not** substitute for a
-physical key — but it tells us precisely which API a `Dongle.dll` replacement has to
+physical key — but it shows precisely which API a `Dongle.dll` replacement has to
 impersonate: Aladdin HASP4 / HASP HL over `hardlock.sys` + `aksusb.sys`.
 
 ### Per-user hive (`cabinet` NTUSER.DAT)
@@ -152,7 +152,7 @@ disc's `GvrShell.reg` at install time.
 
 ## 5. Summary: which registry values actually matter
 
-| Value | Needed to… | Written by our installer? |
+| Value | Needed to… | Written by the installer? |
 |---|---|---|
 | `RUNTIMEOEMREV` + `RUNTIMEOEMVERSION` | run the **OEM** `Setup.exe` | only with `-SetOemRev` |
 | `HKLM\SOFTWARE\GlobalVR\NASCAR\*` | run the game and shell (paths, resolution, launch wiring) | **yes**, repointed at your install root |

@@ -12,3 +12,8 @@ __pycache__/
 
 # release zips built by Tools\Make-Release.ps1 (uploaded to GitHub Releases, not committed)
 dist/
+
+# private notes (bug list, engineering log) live in the dev tree, never in this repo
+docs/BUGS.md
+docs/findings/NASCAR_PLAN.md
+docs/findings/WHEEL_DATA.md
