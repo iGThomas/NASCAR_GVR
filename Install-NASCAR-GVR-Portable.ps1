@@ -1,7 +1,7 @@
 <#
   Install-NASCAR-GVR-Portable.ps1
 
-  Installs GlobalVR "NASCAR Team Racing" into a SINGLE user-chosen folder,
+  Installs GlobalVR "NASCAR Racing" (the v1.1 disc) into a SINGLE user-chosen folder,
   with the GVR folders nested inside it, running on SQLite.
 
   Layout produced (for install root <ROOT>):
@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-12-nascar-portable-4.14" # 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
+$Version = "2026-10-23-nascar-portable-4.15" # 4.15: default folder NASCAR_GVR_1.1 and desktop/start shortcut "NASCAR Racing" (was "NASCAR Team Racing") so the 1.1 and 2.0.2 editions install side by side without clashing; the old shortcut is migrated on install and uninstall. 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -116,7 +116,7 @@ function Select-Folder($description, $startPath, [switch]$FromComputer) {
 function Show-Message($text, $icon = "Information") {
     if (!(Test-CanShowDialogs)) { return }
     $owner = New-DialogOwner
-    try { [void][System.Windows.Forms.MessageBox]::Show($owner, $text, "NASCAR Team Racing installer", "OK", $icon) }
+    try { [void][System.Windows.Forms.MessageBox]::Show($owner, $text, "NASCAR Racing installer", "OK", $icon) }
     finally { $owner.Close() }
 }
 # can we create files there? (a mounted ISO / DVD drive is read-only - seen in a Windows 7 VM)
@@ -137,6 +137,11 @@ function Test-WritableFolder($p) {
 # recognised by the exact v1.1 game exe (we never modify it on disk) PLUS our launcher or settings.
 $Product = "NASCAR_GVR"
 $Edition = "1.1"
+# Default sub-folder and shortcut names, kept DISTINCT from the 2.0.2 "NASCAR Team Racing"
+# edition so both install side by side without clashing (user, 2026-10-23).
+$FolderLeaf         = "NASCAR_GVR_1.1"       # created inside the folder/drive the player picks
+$ShortcutName       = "NASCAR Racing"        # the 2.0.2 edition uses "NASCAR Team Racing"
+$LegacyShortcutName = "NASCAR Team Racing"   # 1.1 used this before 4.15 - migrated on install/uninstall
 $MarkerName = "gvr-install.ini"
 $Exe11Sha256  = "4F61C7D63BD3C70AAB5FAEDFEE55C5587336E83F67ABC9A4C4637B2F66DDE482"   # v1.1 disc 050-0136-01
 $Exe202Sha256 = "316FD6E422CBDF746E41E73BD4D229342389CA8F1C9E5154D10916759E777355"   # 2.0.2.068 (Team Racing)
@@ -869,11 +874,10 @@ function Disable-GammaSet($shell) {
 }
 
 # Dependencies are large (100 MB DirectX redist, 35 MB .NET 1.1); use the package's own
-# Dependencies folder, else a sibling package's copy in the dev layout, rather than duplicating them.
+# Dependencies folder (or -DependenciesRoot) rather than duplicating them.
 function Resolve-Dependencies {
     if (![string]::IsNullOrEmpty($DependenciesRoot)) { return $DependenciesRoot }
-    foreach ($c in @((Join-Path $SourceRoot "Dependencies"),
-                     (Join-Path (Split-Path -Parent $SourceRoot) "GIT\NFSU_GVR_Portable\Dependencies"))) {
+    foreach ($c in @((Join-Path $SourceRoot "Dependencies"))) {
         if (Test-Path $c) { return $c }
     }
     return $null
@@ -1208,12 +1212,12 @@ function Install-Launcher($root, $game, $shell) {
         $target = Join-Path $root "NascarLaunch.exe"
         $useLauncher = Test-Path $target
         # never take over a shortcut that starts ANOTHER install (another copy, a future edition)
-        $lnkName = "NASCAR Team Racing"
+        $lnkName = $ShortcutName
         $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "$lnkName.lnk"
         if (!(Test-OurShortcut $lnk $root)) {
-            $lnkName = "NASCAR Team Racing (" + (Split-Path -Leaf $root) + ")"
+            $lnkName = "$ShortcutName (" + (Split-Path -Leaf $root) + ")"
             $lnk = Join-Path ([Environment]::GetFolderPath("Desktop")) "$lnkName.lnk"
-            Log "  a 'NASCAR Team Racing' shortcut already starts another install - this one is '$lnkName'"
+            Log "  a '$ShortcutName' shortcut already starts another install - this one is '$lnkName'"
         }
         $ws = New-Object -ComObject WScript.Shell
         $s = $ws.CreateShortcut($lnk)
@@ -1227,9 +1231,23 @@ function Install-Launcher($root, $game, $shell) {
             $s.IconLocation = (Join-Path $root "NASCAR_GVR.ico") + ",0"
         }
         $s.WorkingDirectory = $root
-        $s.Description = "NASCAR Team Racing (GlobalVR)"
+        $s.Description = "$ShortcutName (GlobalVR)"
         $s.Save()
         Log "  desktop shortcut -> $($s.TargetPath)"
+
+        # Migrate the pre-4.15 "NASCAR Team Racing" shortcut of THIS install (the name the 1.1
+        # edition used before the 1.1/2.0.2 split) so the player is not left with two icons. Only
+        # a shortcut that points into THIS install is touched - a real 2.0.2 "NASCAR Team Racing"
+        # shortcut points elsewhere and is left alone.
+        if ($LegacyShortcutName -ne $ShortcutName) {
+            foreach ($d in @([Environment]::GetFolderPath("Desktop"), [Environment]::GetFolderPath("Programs"))) {
+                $old = Join-Path $d "$LegacyShortcutName.lnk"
+                if ((Test-Path $old) -and (Test-OurShortcut $old $root)) {
+                    Remove-Item -LiteralPath $old -Force -ErrorAction SilentlyContinue
+                    Log "  migrated old '$LegacyShortcutName' shortcut to '$ShortcutName'"
+                }
+            }
+        }
 
         # Start menu entry as well, so it behaves like a normal installed game.
         $sm = Join-Path ([Environment]::GetFolderPath("Programs")) "$lnkName.lnk"
@@ -1336,7 +1354,7 @@ function Invoke-Uninstall($root) {
     }
     else { Warn "would remove HKLM\SOFTWARE\GlobalVR\NASCAR + gvr\Plus\2.0\Cabinet and GVRSQLITE_DB_NAS1" }
     foreach ($dir in @([Environment]::GetFolderPath("Desktop"), [Environment]::GetFolderPath("Programs"))) {
-        foreach ($l in @(Get-ChildItem -LiteralPath $dir -Filter "NASCAR Team Racing*.lnk" -ErrorAction SilentlyContinue)) {
+        foreach ($l in @(Get-ChildItem -LiteralPath $dir -Filter "NASCAR*Racing*.lnk" -ErrorAction SilentlyContinue)) {
             # only shortcuts that start THIS install
             if ((Test-OurShortcut $l.FullName $root) -and !$DryRun) { Remove-Item -LiteralPath $l.FullName -Force; Log "  removed shortcut $($l.Name)" }
         }
@@ -1377,7 +1395,7 @@ $ReleaseFiles = @(
 function Assert-ReleaseFiles {
     if ($Uninstall) { return }                      # removing an install must work from any folder
     # A release package (and the NASCAR_GIT repo) always has Install.bat - it is what users run.
-    # The dev tree (D:\NFSU_GVR\NASCAR) does not, and finds several of these elsewhere.
+    # A development folder does not, and finds several of these elsewhere.
     if (!(Test-Path -LiteralPath (Join-Path $SourceRoot "Install.bat"))) {
         Log "release guard skipped: $SourceRoot is not a release package (no Install.bat)"
         return
@@ -1401,14 +1419,14 @@ Assert-ReleaseFiles
 
 if ([string]::IsNullOrEmpty($InstallRoot) -and (Test-CanShowDialogs)) {
     while ($true) {
-        $pick = Select-Folder "Where should NASCAR Team Racing be installed?`r`nPick a folder or drive (for example C:\Games) - a NASCAR_GVR folder is created inside it." ""
+        $pick = Select-Folder "Where should NASCAR Racing be installed?`r`nPick a folder or drive (for example C:\Games) - a $FolderLeaf folder is created inside it." ""
         if (!$pick) { Log "cancelled - nothing was installed"; exit 0 }
         $pick = $pick.TrimEnd("\")
-        if ($pick -match '^[A-Za-z]:$') { $InstallRoot = "$pick\NASCAR_GVR" }
+        if ($pick -match '^[A-Za-z]:$') { $InstallRoot = "$pick\$FolderLeaf" }
         # an existing install of OURS is used as it is (to update it); any other folder - another
         # NASCAR game, another GVR title, the 2.0.2 edition - gets a NASCAR_GVR folder inside it
         elseif (@("ours", "ours-legacy", "ours-partial") -contains (Get-InstallKind $pick)) { $InstallRoot = $pick }
-        else { $InstallRoot = Join-Path $pick "NASCAR_GVR" }
+        else { $InstallRoot = Join-Path $pick $FolderLeaf }
         $k = Get-InstallKind $InstallRoot
         if (!(Test-OurKind $k)) {
             Show-Message ("This folder already holds " + (Get-KindText $k) + ":`r`n$InstallRoot`r`n`r`nNothing in it is touched. Pick another folder, for example C:\Games.") "Warning"
@@ -1424,9 +1442,9 @@ if ([string]::IsNullOrEmpty($InstallRoot)) {
     Write-Host "Where would you like to install NASCAR?" -ForegroundColor Cyan
     Write-Host "  Everything goes in this one folder - game, shell, GvrPlus and the database."
     Write-Host "  Nothing is written to C:\ root. About 800 MB is needed."
-    Write-Host "  Examples:  C:\Games\NASCAR_GVR     D:\Games\NASCAR_GVR     E:\Arcade\NASCAR_GVR"
+    Write-Host "  Examples:  C:\Games\$FolderLeaf     D:\Games\$FolderLeaf     E:\Arcade\$FolderLeaf"
     Write-Host ""
-    $def = "C:\Games\NASCAR_GVR"   # not D:\ - that is often the DVD drive holding the game disc
+    $def = "C:\Games\$FolderLeaf"   # not D:\ - that is often the DVD drive holding the game disc
     $InstallRoot = Read-Host "Install folder [$def]"
     if ([string]::IsNullOrEmpty($InstallRoot)) { $InstallRoot = $def }
 }
@@ -1480,7 +1498,7 @@ if (!$UpdateMode -and !(Test-Path (Join-Path $PayloadRoot "NASCAR\Game\NASCAR_GV
     if ($cand) { Log "game disc found: $cand" }
     elseif (Test-CanShowDialogs) {
         while ($true) {
-            $pick = Select-Folder "Select the NASCAR Team Racing v1.1 game disc: the drive of the mounted ISO or disc (or a folder holding data1.cab)." "" -FromComputer
+            $pick = Select-Folder "Select the NASCAR Racing v1.1 game disc: the drive of the mounted ISO or disc (or a folder holding data1.cab)." "" -FromComputer
             if (!$pick) { Log "cancelled - nothing was installed"; exit 0 }
             $cand = $pick.TrimEnd("\"); if ($cand -match '^[A-Za-z]:$') { $cand += "\" }
             if (Test-Path (Join-Path $cand "data1.cab")) { break }
@@ -1490,7 +1508,7 @@ if (!$UpdateMode -and !(Test-Path (Join-Path $PayloadRoot "NASCAR\Game\NASCAR_GV
     else {
         while ($true) {
             Write-Host ""
-            Write-Host "Insert or mount the NASCAR Team Racing game disc (the one with data1.cab)." -ForegroundColor Cyan
+            Write-Host "Insert or mount the NASCAR Racing v1.1 game disc (the one with data1.cab)." -ForegroundColor Cyan
             $DiscPath = Read-Host "Disc drive or folder (e.g. E:\)"
             $cand = $DiscPath.Trim().Trim('"').TrimEnd("\")
             if ($cand -match '^[A-Za-z]:$') { $cand += "\" }
@@ -1570,6 +1588,6 @@ Log "records the command line, the dongle result, every startup state and each F
 Log "============================================================"
 if (!$DryRun) {
     $nl = [Environment]::NewLine
-    $msg = "NASCAR Team Racing is " + $(if ($UpdateMode) { "updated" } else { "installed" }) + " in:" + $nl + $InstallRoot + $nl + $nl + "Start it with the NASCAR Team Racing shortcut on your desktop." + $nl + "Settings: nascar_settings.ini in that folder."
+    $msg = "NASCAR Racing is " + $(if ($UpdateMode) { "updated" } else { "installed" }) + " in:" + $nl + $InstallRoot + $nl + $nl + "Start it with the $ShortcutName shortcut on your desktop." + $nl + "Settings: nascar_settings.ini in that folder."
     Show-Message $msg
 }
