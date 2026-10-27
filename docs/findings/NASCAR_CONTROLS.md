@@ -263,10 +263,23 @@ decides each role itself; every `[Wheel]` device setting is only an override:
   without such a hold make it sequential (0 / 1 = square / triangle = shift up / down). Until then a
   press waits up to 0.4 s; a tap is passed on as a 150 ms press.
 * Shifter without "shift" in its name (a generic USB shifter): it starts as a button slot; a device
-  with no axes and at most 16 buttons whose single button stays held over 3 s (a gear - rim and box
-  buttons are never held that long) becomes the shifter, H-pattern. Named button boxes never do.
+  whose axes never move and which holds one button over 2 s, later another one (two gears - rim and
+  box buttons are tapped, a toggle switch is one button) becomes the shifter, H-pattern. Buttons
+  already down at the first reading (a mode switch) are ignored until released once. The result is
+  saved in `nascar_calibration.ini` `[Shifter]` (VID:PID), so the shell and every race pick it at
+  once. Named button boxes never become the shifter; `ShifterDevice = none` turns shifters off.
 * Buttons: every other controller that is not a gamepad (a separate rim, a button box) adds its
   buttons and hat through the wheel's `ButtonN` map; `ButtonBox1..3` (+ `ButtonBoxKButtonN`) name them.
+* Access: a base that Windows lists as a joystick with force feedback (HID PID direct-drive bases,
+  e.g. MOZA, USB VID 346E) gets the shim's own force feedback, which needs exclusive foreground
+  access. The menus and the race are two programs; when the exclusive `Acquire` is refused (the
+  other program or the maker's software still holds the base) the wheel is read shared, without
+  the shim's force feedback in that program, until its window changes. Before, a refused
+  `Acquire` left the wheel unread: steering 0 while separate pedals (always read shared) worked.
+* Discovery runs only on the pad thread. The front end's start-up pedal check waits for its first
+  pass at most 3 s; menu selection (transmission screen) moves from the OEM to the shim as soon as
+  a PC wheel or pedal box is found, so a slow first scan no longer leaves the transmission screen
+  on the cabinet-wheel path.
 * Pedal calibration is the cabinet's own. The I/O board keeps per pedal a raw position (GvrIO
   msg 6 = `Gvr.AxisRawY/Z`) and a min / max (`0x39` / `0x3A` = `Gvr.AxisMin/MaxY/Z`) that grows as
   the pedal moves; `Gvr.ResetCalibration = true` (msg `0x53`) clears it; `Gvr.AxisY/Z` (msg 5) is the

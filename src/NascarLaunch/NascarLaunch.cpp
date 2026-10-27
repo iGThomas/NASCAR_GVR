@@ -158,6 +158,22 @@ static void log_pc_config(void)
     if (EnumDisplaySettingsA(NULL, ENUM_CURRENT_SETTINGS, &dm))
         logf("display : %lux%lu %lubpp @ %luHz (desktop)",
              dm.dmPelsWidth, dm.dmPelsHeight, dm.dmBitsPerPel, dm.dmDisplayFrequency);
+    // Which adapter drives which screen: a virtual display (VR streaming, "virtual display"
+    // drivers) as the primary or at 0,0 gives the front end software OpenGL / no picture.
+    for (DWORD i = 0; i < 16; ++i) {
+        DISPLAY_DEVICEA dd; dd.cb = sizeof(dd);
+        if (!EnumDisplayDevicesA(NULL, i, &dd, 0)) break;
+        if (!(dd.StateFlags & DISPLAY_DEVICE_ATTACHED_TO_DESKTOP)) {
+            logf("screen  : %s on '%s' - not in use", dd.DeviceName, dd.DeviceString);
+            continue;
+        }
+        DEVMODEA m; m.dmSize = sizeof(m); m.dmDriverExtra = 0;
+        bool have = EnumDisplaySettingsA(dd.DeviceName, ENUM_CURRENT_SETTINGS, &m) != FALSE;
+        logf("screen  : %s on '%s' - %lux%lu at %ld,%ld%s", dd.DeviceName, dd.DeviceString,
+             have ? m.dmPelsWidth : 0, have ? m.dmPelsHeight : 0,
+             have ? m.dmPosition.x : 0, have ? m.dmPosition.y : 0,
+             (dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) ? " (primary)" : "");
+    }
     logf(".net 1.1: %s", dotnet11_installed() ? "yes" : "NO (v1.1.4322\\mscorlib.dll missing)");
     // The shell's .NET 1.1 code parses US-format dates; the 2.0.2 shim runs the shell as en-US
     // whatever this says. Logged so a report shows the PC's own format at a glance.
@@ -317,6 +333,94 @@ static void ensure_anark_prefs(void)
         logf("Anark client preferences restored");
     }
     RegCloseKey(k);
+}
+
+// ---------------------------------------------------------------- 2.0.2 renderer
+//
+// NASCAR Team Racing's front end (AMPlayer.exe, Anark Client 4.0, link stamp 0x47C34847) uses the
+// renderer saved in HKCU\Software\Anark\Client\4.0\Preferences ClientRenderer. OpenGL (2) is the
+// one that survives alt-tab on Windows 10/11 (its Direct3D one, 3, deadlocks in DirectDraw), but
+// it needs a hardware OpenGL driver: on a screen driven by a virtual display adapter Windows hands
+// out its software OpenGL 1.1, the front end greys OpenGL out and shows no usable picture. So
+// [Display] Renderer = auto probes OpenGL the way the front end does (a hidden window at 0,0,
+// pixel format #1's description, a real context) and picks OpenGL with hardware OpenGL 1.3+,
+// else Direct3D. opengl / directx force one.
+static bool is_teamracing_shell(const char* amPlayer)
+{
+    HANDLE f = CreateFileA(amPlayer, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
+    if (f == INVALID_HANDLE_VALUE) return false;
+    BYTE h[1024]; DWORD got = 0;
+    BOOL ok = ReadFile(f, h, sizeof(h), &got, NULL);
+    CloseHandle(f);
+    if (!ok || got < 0x40) return false;
+    DWORD pe = *(DWORD*)(h + 0x3C);
+    return pe + 12 <= got && *(DWORD*)(h + pe + 8) == 0x47C34847;
+}
+
+static bool probe_opengl(char* what, size_t n)
+{
+    snprintf(what, n, "no OpenGL");
+    HMODULE gl = LoadLibraryA("opengl32.dll");
+    if (!gl) return false;
+    typedef HGLRC (WINAPI *PFN_Create)(HDC);
+    typedef BOOL (WINAPI *PFN_Make)(HDC, HGLRC);
+    typedef BOOL (WINAPI *PFN_Delete)(HGLRC);
+    typedef const char* (WINAPI *PFN_Str)(unsigned int);
+    PFN_Create create = (PFN_Create)GetProcAddress(gl, "wglCreateContext");
+    PFN_Make   make   = (PFN_Make)GetProcAddress(gl, "wglMakeCurrent");
+    PFN_Delete del    = (PFN_Delete)GetProcAddress(gl, "wglDeleteContext");
+    PFN_Str    str    = (PFN_Str)GetProcAddress(gl, "glGetString");
+    bool hw = false;
+    WNDCLASSA wc = {}; wc.style = CS_OWNDC; wc.lpfnWndProc = DefWindowProcA;
+    wc.hInstance = GetModuleHandleA(NULL); wc.lpszClassName = "NascarLaunchGlProbe";
+    RegisterClassA(&wc);
+    HWND w = CreateWindowExA(0, wc.lpszClassName, "", WS_POPUP, 0, 0, 1, 1, NULL, NULL, wc.hInstance, NULL);
+    HDC dc = w ? GetDC(w) : NULL;
+    if (dc && create && make && del && str) {
+        PIXELFORMATDESCRIPTOR pfd;
+        DescribePixelFormat(dc, 1, sizeof(pfd), &pfd);
+        int pf = ChoosePixelFormat(dc, &pfd);
+        HGLRC rc = (pf && SetPixelFormat(dc, pf, &pfd)) ? create(dc) : NULL;
+        if (rc && make(dc, rc)) {
+            const char* ven = str(0x1F00); const char* ren = str(0x1F01); const char* ver = str(0x1F02);
+            int major = ver ? atoi(ver) : 0, minor = 0;
+            const char* dot = ver ? strchr(ver, '.') : NULL;
+            if (dot) minor = atoi(dot + 1);
+            snprintf(what, n, "%s / %s / OpenGL %s", ven ? ven : "?", ren ? ren : "?", ver ? ver : "?");
+            hw = (major > 1 || (major == 1 && minor >= 3)) && !(ren && strstr(ren, "GDI Generic"));
+            make(NULL, NULL);
+        } else {
+            snprintf(what, n, "no OpenGL context (pixel format %d)", pf);
+        }
+        if (rc) del(rc);
+    }
+    if (dc) ReleaseDC(w, dc);
+    if (w) DestroyWindow(w);
+    UnregisterClassA(wc.lpszClassName, wc.hInstance);
+    return hw;
+}
+
+static void choose_teamracing_renderer(const char* amPlayer)
+{
+    if (!is_teamracing_shell(amPlayer)) return;
+    std::string want = ini_str("Display", "Renderer", "auto");
+    for (size_t i = 0; i < want.size(); i++) want[i] = (char)tolower((unsigned char)want[i]);
+    DWORD r = 2;
+    char what[256] = "";
+    if (want == "directx") { r = 3; snprintf(what, sizeof(what), "set in [Display] Renderer"); }
+    else if (want == "opengl") { r = 2; snprintf(what, sizeof(what), "set in [Display] Renderer"); }
+    else {
+        if (want != "auto") logf("renderer: [Display] Renderer = '%s' is not auto, opengl or directx - using auto", want.c_str());
+        r = probe_opengl(what, sizeof(what)) ? 2 : 3;
+    }
+    HKEY k;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Anark\\Client\\4.0\\Preferences", 0, NULL, 0,
+                        KEY_SET_VALUE, NULL, &k, NULL) == ERROR_SUCCESS) {
+        RegSetValueExA(k, "ClientRenderer", 0, REG_DWORD, (const BYTE*)&r, sizeof(r));
+        RegCloseKey(k);
+    }
+    logf("renderer: %s (%s)%s", r == 2 ? "OpenGL" : "Direct3D", what,
+         r == 3 && want == "auto" ? " - no hardware OpenGL here: Direct3D instead (alt-tab may freeze the menus)" : "");
 }
 
 // ---------------------------------------------------------------- database
@@ -758,6 +862,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     snprintf(amPlayer, sizeof(amPlayer), "%s\\bin\\AMPlayer.exe", shellDir);
     snprintf(shellAm,  sizeof(shellAm),  "%s\\Shell.am", shellDir);
     snprintf(gameExe,  sizeof(gameExe),  "%s\\NASCAR_GVR.exe", gameDir);
+
+    choose_teamracing_renderer(amPlayer);
 
     if (s.mode == "race") {
         // Straight into a session, bypassing the cabinet front end. Handy for

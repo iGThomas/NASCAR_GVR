@@ -93,9 +93,10 @@ reports.
 
 **Direct-drive bases, separate pedals, shifters and button boxes:** just plug them in. Steering
 comes from the wheel, gas and brake from the pedal box (found by name, or by the first pedal you
-press), gears from a separate shifter (found by name or by a held gear; H-pattern or sequential,
-recognised from how it is used; select Manual on the transmission screen), and a separate rim or
-button box adds its buttons like the wheel's.
+press), gears from a separate shifter (found by name, or by holding two gears for a couple of seconds
+each - remembered after that; H-pattern or sequential, recognised from how it is used; select
+Manual on the transmission screen), and a separate rim or button box adds its buttons like the
+wheel's. A base that another program holds for force feedback is still read for steering.
 
 **Pedal calibration works like the arcade's:** the first time the game sees your pedals it shows
 "Calibrate the accelerator and brake" - press each pedal all the way down once. The result is
@@ -114,7 +115,8 @@ Every control, and how to remap the pad: [docs/findings/NASCAR_CONTROLS.md](docs
 
 In the install folder. The main ones:
 
-- `[Display]` — `Width`, `Height`, `Fullscreen`, `Borderless`
+- `[Display]` — `Width`, `Height`, `Fullscreen`, `Borderless`; `Renderer` (Team Racing menus:
+  `auto` picks OpenGL when the PC has hardware OpenGL, else Direct3D)
 - `[Controller]` / `[Frontend]` — the gamepad button map for the race and the menus
 - `[Debug] Log=true` — writes diagnostics to a `LOG` folder in the install root: your PC config
   (CPU, motherboard, GPU + driver version), the launch timeline, a native crash filter for the

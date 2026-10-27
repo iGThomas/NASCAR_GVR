@@ -1028,6 +1028,179 @@ static void taming_hook_display(void)
         shim_log("taming: could NOT hook CreateProcessA - display tweaks NOT suppressed");
 }
 
+// NASCAR Racing 1.1's AMPlayer.exe asks for Anark's AKLog2 logger, which never shipped - it runs
+// fine with "class not registered". A NASCAR Team Racing (2.0.2) install registers its own AKLog2
+// stand-in machine-wide, and 1.1 then loaded it (v1.2.0). In the 1.1 shell the class is always
+// "not registered", whatever this PC has registered (an older 2.0.2 install included).
+static const CLSID kCLSID_AKLog2 = { 0xDE411D6F, 0x2BDA, 0x444C, { 0xAC, 0x87, 0x91, 0x71, 0xBA, 0xFD, 0x9E, 0x99 } };
+typedef HRESULT (WINAPI *PFN_CoCreateInstance)(REFCLSID, void*, DWORD, REFIID, void**);   // IUnknown* outer
+static PFN_CoCreateInstance g_realCoCreateInstance = NULL;
+
+static HRESULT WINAPI hook_CoCreateInstance(REFCLSID c, void* outer, DWORD ctx, REFIID r, void** pv)
+{
+    if (IsEqualCLSID(c, kCLSID_AKLog2)) {
+        static LONG s_logged = 0;
+        if (!InterlockedExchange(&s_logged, 1)) shim_log("taming: AKLog2 refused in the 1.1 shell (class not registered, as on its own)");
+        if (pv) *pv = NULL;
+        return REGDB_E_CLASSNOTREG;
+    }
+    return g_realCoCreateInstance(c, outer, ctx, r, pv);
+}
+
+static void taming_hook_aklog(void)
+{
+    const BYTE* host = (const BYTE*)GetModuleHandleA(NULL);
+    const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(host + ((const IMAGE_DOS_HEADER*)host)->e_lfanew);
+    if (nt->FileHeader.TimeDateStamp != 0x46AFA277 || g_realCoCreateInstance) return;   // 1.1 AMPlayer.exe only
+    if (!patch_import(GetModuleHandleA(NULL), "ole32.dll", "CoCreateInstance",
+                      (void*)hook_CoCreateInstance, (void**)&g_realCoCreateInstance))
+        shim_log("taming: could NOT hook CoCreateInstance - a registered AKLog2 would load in the 1.1 shell");
+}
+
+// Both shells (Anark AMPlayer.exe) offer OpenGL only when the driver's extension list names all
+// of GL_EXT_bgra, GL_WIN_swap_hint, GL_ARB_multitexture and GL_EXT_texture_env_combine (2.0.2:
+// sub_63B44590); otherwise the renderer menu shows OpenGL greyed out. Current drivers often list
+// only newer names (GL_ARB_texture_env_combine) although OpenGL 1.2 / 1.3 made all of it standard,
+// and its renderer copes without the swap hint (it null-checks glAddSwapHintRectWIN and only
+// logs a missing feature). So with a hardware driver of OpenGL 1.3 or newer the missing old names
+// are added to the list. Windows' software OpenGL (1.1) is never dressed up.
+typedef const unsigned char* (WINAPI *PFN_glGetString)(unsigned int);
+static PFN_glGetString g_realGlGetString = NULL;
+
+static bool gl_has(const char* list, const char* name)
+{
+    size_t n = strlen(name);
+    for (const char* p = list; (p = strstr(p, name)) != NULL; p += n)
+        if ((p == list || p[-1] == ' ') && (p[n] == ' ' || p[n] == 0)) return true;
+    return false;
+}
+
+static const unsigned char* WINAPI hook_glGetString(unsigned int name)
+{
+    const unsigned char* s = g_realGlGetString(name);
+    if (name != 0x1F03 || !s) return s;                       // GL_EXTENSIONS only
+    const char* ver = (const char*)g_realGlGetString(0x1F02); // GL_VERSION "major.minor..."
+    int major = ver ? atoi(ver) : 0, minor = 0;
+    const char* dot = ver ? strchr(ver, '.') : NULL;
+    if (dot) minor = atoi(dot + 1);
+    if (major < 1 || (major == 1 && minor < 3)) return s;      // software 1.1: leave alone
+    static const char* const kOld[4] = { "GL_EXT_bgra", "GL_WIN_swap_hint", "GL_ARB_multitexture", "GL_EXT_texture_env_combine" };
+    char missing[128] = "";
+    for (int i = 0; i < 4; ++i)
+        if (!gl_has((const char*)s, kOld[i])) { strcat(missing, " "); strcat(missing, kOld[i]); }
+    if (!missing[0]) return s;
+    // one combined copy per driver string (a few contexts at most); kept for the process' life
+    static struct { const unsigned char* src; char* out; } cache[8];
+    static CRITICAL_SECTION cs; static LONG csInit = 0;
+    if (InterlockedCompareExchange(&csInit, 1, 0) == 0) InitializeCriticalSection(&cs), InterlockedExchange(&csInit, 2);
+    while (csInit != 2) Sleep(0);
+    EnterCriticalSection(&cs);
+    const unsigned char* r = s;
+    int i = 0;
+    for (; i < 8 && cache[i].src; ++i) if (cache[i].src == s) { r = (const unsigned char*)cache[i].out; break; }
+    if (r == s && i < 8) {
+        size_t len = strlen((const char*)s);
+        char* out = (char*)malloc(len + sizeof missing + 1);
+        if (out) {
+            memcpy(out, s, len + 1);
+            strcat(out, missing);
+            cache[i].src = s; cache[i].out = out; r = (const unsigned char*)out;
+            shim_log("opengl: %s driver lacks the old names%s - added (OpenGL %s has them built in)",
+                     (const char*)g_realGlGetString(0x1F00), missing, ver);
+        }
+    }
+    LeaveCriticalSection(&cs);
+    return r;
+}
+
+// DirectX 7 (1.1's renderer; 2.0.2's Direct3D): AMPlayer's D3DX device list enumerates with
+// flags 7 - attached secondary, DETACHED secondary and non-display devices. An installed but
+// inactive virtual monitor (VR streaming, "virtual display" drivers) cannot show a picture, so
+// only attached displays are offered. Every device is logged, and the one the renderer opens,
+// with its monitor: a report then shows where the picture went.
+typedef BOOL (WINAPI *PFN_DDEnumCbExA)(GUID*, LPSTR, LPSTR, LPVOID, HMONITOR);
+typedef HRESULT (WINAPI *PFN_DDEnumExA)(PFN_DDEnumCbExA, LPVOID, DWORD);
+typedef HRESULT (WINAPI *PFN_DDCreateEx)(GUID*, LPVOID*, REFIID, void*);
+static PFN_DDEnumExA  g_realDDEnumExA  = NULL;
+static PFN_DDCreateEx g_realDDCreateEx = NULL;
+struct DDSeen { GUID guid; bool primary; char name[96]; };
+static DDSeen g_ddSeen[8]; static volatile LONG g_ddSeenN = 0;
+struct DDEnumCtx { PFN_DDEnumCbExA cb; LPVOID ctx; };
+
+static void dd_monitor(HMONITOR m, char* out, size_t n)
+{
+    MONITORINFOEXA mi; mi.cbSize = sizeof mi;
+    if (m && GetMonitorInfoA(m, &mi))
+        _snprintf(out, n, "%s %ldx%ld at %ld,%ld%s", mi.szDevice, mi.rcMonitor.right - mi.rcMonitor.left,
+                  mi.rcMonitor.bottom - mi.rcMonitor.top, mi.rcMonitor.left, mi.rcMonitor.top,
+                  (mi.dwFlags & MONITORINFOF_PRIMARY) ? " (primary)" : "");
+    else lstrcpynA(out, m ? "monitor ?" : "the primary display driver", (int)n);
+    out[n - 1] = 0;
+}
+
+static BOOL WINAPI dd_enum_cb(GUID* g, LPSTR desc, LPSTR name, LPVOID p, HMONITOR m)
+{
+    DDEnumCtx* c = (DDEnumCtx*)p;
+    char mon[160]; dd_monitor(m, mon, sizeof mon);
+    LONG n = g_ddSeenN;
+    bool known = false;
+    for (LONG i = 0; i < n; ++i)
+        if ((g ? !g_ddSeen[i].primary && IsEqualGUID(g_ddSeen[i].guid, *g) : g_ddSeen[i].primary)) known = true;
+    if (!known && n < 8) {
+        DDSeen& s = g_ddSeen[n];
+        s.primary = g == NULL; if (g) s.guid = *g;
+        _snprintf(s.name, sizeof s.name, "%s", desc ? desc : "?"); s.name[sizeof s.name - 1] = 0;
+        InterlockedIncrement(&g_ddSeenN);
+        shim_log("display: DirectX device %ld '%s' (%s) on %s", n + 1, desc ? desc : "?", name ? name : "?", mon);
+    }
+    return c->cb(g, desc, name, c->ctx, m);
+}
+
+static HRESULT WINAPI hook_DDEnumExA(PFN_DDEnumCbExA cb, LPVOID ctx, DWORD flags)
+{
+    DDEnumCtx c = { cb, ctx };
+    DWORD use = flags & 0x1;                                   // DDENUM_ATTACHEDSECONDARYDEVICES only
+    static LONG s_logged = 0;
+    if (use != flags && !InterlockedExchange(&s_logged, 1))
+        shim_log("display: DirectX device list limited to attached displays (asked for flags 0x%lX)", flags);
+    return g_realDDEnumExA(cb ? dd_enum_cb : NULL, cb ? (LPVOID)&c : ctx, use);
+}
+
+static HRESULT WINAPI hook_DDCreateEx(GUID* g, LPVOID* dd, REFIID iid, void* outer)
+{
+    HRESULT hr = g_realDDCreateEx(g, dd, iid, outer);
+    static GUID s_last; static bool s_any = false, s_lastPrimary = false;
+    bool same = s_any && (g ? !s_lastPrimary && IsEqualGUID(s_last, *g) : s_lastPrimary);
+    if (!same) {                                               // log each switch of device once
+        s_any = true; s_lastPrimary = g == NULL; if (g) s_last = *g;
+        const char* nm = g ? "a secondary device" : "the primary display driver";
+        for (LONG i = 0; i < g_ddSeenN; ++i)
+            if (g ? !g_ddSeen[i].primary && IsEqualGUID(g_ddSeen[i].guid, *g) : g_ddSeen[i].primary) nm = g_ddSeen[i].name;
+        shim_log("display: DirectDraw opened on '%s' -> hr 0x%08lX", nm, (unsigned long)hr);
+    }
+    return hr;
+}
+
+static void taming_hook_ddraw(void)
+{
+    if (g_realDDEnumExA || GetEnvironmentVariableA("GVRIOSHIM_NO_DD_FIX", NULL, 0) > 0) return;
+    if (!GetModuleHandleA("ddraw.dll")) return;
+    HMODULE host = GetModuleHandleA(NULL);
+    if (!patch_import(host, "DDRAW.dll", "DirectDrawEnumerateExA", (void*)hook_DDEnumExA, (void**)&g_realDDEnumExA))
+        shim_log("display: could NOT hook DirectDrawEnumerateExA");
+    if (!patch_import(host, "DDRAW.dll", "DirectDrawCreateEx", (void*)hook_DDCreateEx, (void**)&g_realDDCreateEx))
+        shim_log("display: could NOT hook DirectDrawCreateEx");
+}
+
+static void taming_hook_opengl(void)
+{
+    if (g_realGlGetString || GetEnvironmentVariableA("GVRIOSHIM_NO_GL_FIX", NULL, 0) > 0) return;
+    if (!GetModuleHandleA("opengl32.dll")) return;          // the host does not use OpenGL
+    if (!patch_import(GetModuleHandleA(NULL), "OPENGL32.dll", "glGetString",
+                      (void*)hook_glGetString, (void**)&g_realGlGetString))
+        shim_log("opengl: could NOT hook glGetString - OpenGL may stay greyed out on some drivers");
+}
+
 // ------------------------------------------------------------------ public
 void pad_attach(HMODULE self, bool isShell)
 {
@@ -1037,6 +1210,9 @@ void pad_attach(HMODULE self, bool isShell)
     InitializeCriticalSection(&g_cs);
     wheel_attach();
     if (isShell) taming_hook_display();   // suppress the shell's cabinet display-mode launches
+    if (isShell) taming_hook_aklog();     // 1.1: never load a 2.0.2 AKLog2 stand-in
+    if (isShell) taming_hook_opengl();    // OpenGL not greyed out on drivers with new names only
+    if (isShell) taming_hook_ddraw();     // DirectX device list: attached displays only, logged
 }
 
 // 2.0.2's GvrIO (link stamp 0x480FA1CF) reads the keyboard through DirectInput and then

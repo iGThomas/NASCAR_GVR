@@ -149,9 +149,25 @@ static HRESULT __stdcall CF_Lock(CF*, BOOL) { return S_OK; }
 static void* g_cfvt[5] = { (void*)CF_QI,(void*)CF_AddRef,(void*)CF_Release,(void*)CF_Create,(void*)CF_Lock };
 static CF g_cf = { g_cfvt };
 
+// The CLSID is registered machine-wide, and NASCAR Racing 1.1's AMPlayer.exe (and its AKPlu*.dll)
+// asks for it too: there it must stay "not registered", as before 2.0.2 was installed. Only the
+// 2.0.2 AMPlayer.exe (PE stamp 0x47C34847) gets the object and the exception logger.
+static bool host_is_202() {
+    const BYTE* b=(const BYTE*)GetModuleHandleA(NULL);
+    const IMAGE_NT_HEADERS* nt=(const IMAGE_NT_HEADERS*)(b+((const IMAGE_DOS_HEADER*)b)->e_lfanew);
+    return nt->FileHeader.TimeDateStamp==0x47C34847;
+}
 extern "C" HRESULT __stdcall DllGetClassObject(REFCLSID c, REFIID r, void** o) {
-    if (!IsEqualCLSID(c,CLSID_AKLog2)) return CLASS_E_CLASSNOTAVAILABLE;
+    if (o) *o=0;
+    if (!IsEqualCLSID(c,CLSID_AKLog2) || !host_is_202()) return CLASS_E_CLASSNOTAVAILABLE;
     return CF_QI(&g_cf,r,o);
 }
 extern "C" HRESULT __stdcall DllCanUnloadNow() { return S_FALSE; }
-BOOL WINAPI DllMain(HINSTANCE h, DWORD r, LPVOID) { if (r==DLL_PROCESS_ATTACH) { g_self=h; DisableThreadLibraryCalls(h); AddVectoredExceptionHandler(1,Veh); out("AKLOG: exception logger armed\n"); } return TRUE; }
+BOOL WINAPI DllMain(HINSTANCE h, DWORD r, LPVOID) {
+    if (r==DLL_PROCESS_ATTACH) {
+        g_self=h; DisableThreadLibraryCalls(h);
+        if (host_is_202()) { AddVectoredExceptionHandler(1,Veh); out("AKLOG: exception logger armed\n"); }
+        else out("AKLOG: not the 2.0.2 AMPlayer - AKLog2 refused, no exception logger\n");
+    }
+    return TRUE;
+}

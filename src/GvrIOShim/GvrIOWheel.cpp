@@ -20,8 +20,10 @@
 //              wheel axis rests in the middle) becomes the pedal box (pedal_moved). With a
 //              pedal box but no wheel, steering stays on the pad / keyboard.
 //    SHIFTER   on its own USB cable: [Wheel] ShifterDevice=, else "shift" / "TH8" / "TSS",
-//              else learned (box_is_shifter): a small device with no axes whose button
-//              stays held over 3 s (a gear) - a button box never holds one that long.
+//              else learned (box_is_shifter): a device whose axes never move and which holds
+//              one button for over 2 s, then another (two gears) - a button box does not.
+//              Remembered in nascar_calibration.ini [Shifter], so every later start and
+//              race knows it at once. ShifterDevice = none: no shifter, nothing learned.
 //              H-pattern or sequential is learned from use (shifter_bits): a held gear =
 //              H (buttons 0..5 = gears 1, 2, 3, 4, 4, 4), short taps = sequential (0 / 1 =
 //              square / triangle = shift up / down). ShifterMode = h | sequential forces it.
@@ -107,7 +109,8 @@ struct Learn { unsigned present; bool real; long rest[8]; };
 // (slots 1..3 can be named in [Wheel] ButtonBox1..3; other controllers fill free slots).
 struct ExtraDev { LPDIRECTINPUTDEVICE8A dev; char name[MAX_PATH]; HWND coop; bool acq;
                   unsigned map[32]; unsigned prev; char filter[64]; DWORD id; Learn learn;
-                  DWORD nbtn; DWORD heldSince; };
+                  DWORD nbtn; DWORD heldSince;
+                  bool started; unsigned base; int gear; bool axMoved; };   // shifter learning (box_is_shifter)
 enum { X_SHIFTER = 0, X_NAMED = 4, X_COUNT = 7 };
 static ExtraDev g_x[X_COUNT];
 static const char* const x_role[X_COUNT] = { "shifter", "buttons 1", "buttons 2", "buttons 3",
@@ -408,11 +411,15 @@ static bool pad_like(const DevInfo& e)
 }
 
 static bool pedal_like(const DevInfo& e) { return has_text(e.name, "pedal") || has_text(e.name, "LCM"); }
+static bool shifter_off(void) { return _stricmp(g_x[X_SHIFTER].filter, "none") == 0; }
+static DWORD g_savedShifter = 0;                  // VID:PID of a shifter learned earlier (shifter_load)
 static bool shifter_like(const DevInfo& e)
 {
     const char* f = g_x[X_SHIFTER].filter;
+    if (shifter_off()) return false;
     return f[0] ? has_text(e.name, f)
-                : has_text(e.name, "shift") || has_text(e.name, "TH8") || has_text(e.name, "TSS");
+                : has_text(e.name, "shift") || has_text(e.name, "TH8") || has_text(e.name, "TSS") ||
+                  (g_savedShifter && e.product == g_savedShifter);
 }
 static bool box_like(const DevInfo& e)            // named in [Wheel] ButtonBox1..3
 {
@@ -593,6 +600,26 @@ static void cal_save(DWORD now)
     shim_log("pedals: calibration saved - gas %d..%d, brake %d..%d (of 255)",
              g_cal[1].min, g_cal[1].max, g_cal[2].min, g_cal[2].max);
 }
+
+// A generic shifter learned once (adopt_shifter) is picked by its VID:PID from then on - the
+// shell and every race are separate programs, each would learn it again from scratch.
+static void shifter_load(void)
+{
+    char path[MAX_PATH], v[32];
+    if (shifter_off() || !cal_path(path, sizeof path)) return;
+    GetPrivateProfileStringA("Shifter", "Device", "", v, sizeof v, path);
+    g_savedShifter = strtoul(v, NULL, 16);
+}
+
+static void shifter_save(DWORD id, const char* name)
+{
+    char path[MAX_PATH], v[32];
+    if (!id || !cal_path(path, sizeof path)) return;
+    _snprintf(v, sizeof v, "%08lX", (unsigned long)id); v[31] = 0;
+    WritePrivateProfileStringA("Shifter", "Device", v, path);
+    WritePrivateProfileStringA("Shifter", "Name", name, path);
+    g_savedShifter = id;
+}
 static PedalState g_pg, g_pb;                 // gas, brake (combined: g_pg holds the axis' rest)
 static bool  g_realReport = false;            // the pedal source has sent a report of its own
 // "axis moves" logging, per device (wheel, pedal box)
@@ -737,24 +764,40 @@ static void controls_summary(void)
     shim_log("%s", buf);
 }
 
-// Discovery: the pad thread every ~1.5 s while there is no wheel, and once from the shell's
-// startup pedal check (wheel_discover_first) - serialised.
+// Discovery runs ONLY on the pad thread (every ~1.5 s while there is no wheel). A DirectInput
+// scan can block for a long time or for good on some PCs (certain USB headsets / hubs); on a
+// game thread that froze the shell on "Please Wait" (v1.2.0, where the shell's start-up pedal
+// check ran the scan itself).
 static CRITICAL_SECTION g_dcs;
+static HANDLE g_discEv = NULL;                    // set after the pad thread's first pass
 static void discover(void);
 static volatile LONG g_discovered = 0;
 
 void wheel_discover(void)
 {
     EnterCriticalSection(&g_dcs);
+    DWORD t0 = GetTickCount();
     discover();
+    DWORD took = GetTickCount() - t0;
+    static int s_slow = 0;
+    if (took > 1000 && s_slow++ < 5) shim_log("controllers: scan took %lu ms (a USB device answers slowly)", took);
     InterlockedExchange(&g_discovered, 1);
     LeaveCriticalSection(&g_dcs);
+    if (g_discEv) SetEvent(g_discEv);
 }
 
-// The shell asks for the pedal range at start-up, possibly before the pad thread's first pass.
+// The shell asks for the pedal range at start-up, possibly before the pad thread's first pass:
+// wait for that pass ONCE and at most 3 s (the caller has started the pad thread). Late pedals
+// are still picked up by the pad thread; the start-up check then sees the cabinet's old answer.
 void wheel_discover_first(void)
 {
-    if (!g_discovered) wheel_discover();
+    static volatile LONG s_waited = 0;
+    if (g_discovered || !g_discEv || InterlockedExchange(&s_waited, 1)) return;
+    DWORD t0 = GetTickCount();
+    if (WaitForSingleObject(g_discEv, 3000) != WAIT_OBJECT_0)
+        shim_log("controllers: the first controller scan is still running after 3 s - start-up goes on without it");
+    else if (GetTickCount() - t0 > 500)
+        shim_log("controllers: the first controller scan took %lu ms", GetTickCount() - t0);
 }
 
 static void discover(void)
@@ -763,7 +806,7 @@ static void discover(void)
     if (!configured) {
         configured = true;
         g_woff = GetEnvironmentVariableA("GVRIOSHIM_NO_WHEEL", NULL, 0) > 0;
-        if (!g_woff) load_wheel_config();
+        if (!g_woff) { load_wheel_config(); shifter_load(); }
         if (g_woff) shim_log("wheel: off");
     }
     if (g_woff || g_dev) return;                  // (with only a pedal box: keep looking for a wheel)
@@ -877,14 +920,19 @@ static void discover(void)
             ExtraDev& x = g_x[k];
             x.dev = dev[2 + k]; x.coop = NULL; x.acq = false; x.prev = 0; x.id = id[2 + k];
             x.nbtn = nbtn[2 + k]; x.heldSince = 0;
+            x.started = false; x.base = 0; x.gear = -1; x.axMoved = false;
             memset(&x.learn, 0, sizeof x.learn); x.learn.present = present[2 + k];
             lstrcpynA(x.name, l.d[pick[2 + k]].name, sizeof x.name);
             if (k == X_SHIFTER) {
                 memset(&g_sh, 0, sizeof g_sh); g_sh.mode = g_shiftCfg;
+                bool saved = !g_x[X_SHIFTER].filter[0] && g_savedShifter && x.id == g_savedShifter;
+                if (saved && g_sh.mode == SH_AUTO) g_sh.mode = SH_H;   // it was learned from a held gear
+                if (saved) shim_log("shifter: '%s' was learned earlier (nascar_calibration.ini [Shifter])", x.name);
                 shim_log("shifter: buttons 0..5 = gear 1, 2, 3, 4, 4, 4 when held (H-pattern), 0 / 1 = square / triangle "
                          "(shift up / down) when tapped (sequential) - %s; ShifterButtonN overrides; gears act with Manual "
                          "chosen on the transmission screen",
-                         g_shiftCfg == SH_H ? "set to H" : g_shiftCfg == SH_SEQ ? "set to sequential" : "learned from the first presses");
+                         g_shiftCfg == SH_H ? "set to H" : g_shiftCfg == SH_SEQ ? "set to sequential" :
+                         saved ? "H, as learned" : "learned from the first presses");
             }
         }
     }
@@ -981,15 +1029,43 @@ static int pedal_moved(Learn& lr, const DIJOYSTATE2& s, int skip, int minEnds)
     return ends >= minEnds ? moved : -1;
 }
 
+// Whether a device's axes stay where they were at its first real report (a generic shifter
+// often declares axes it never moves). Sticky: once one moves far, x.axMoved stays set.
+static void watch_axes(ExtraDev& x, const DIJOYSTATE2& s)
+{
+    Learn& lr = x.learn;
+    if (x.axMoved || !lr.present) return;
+    if (!lr.real) {                               // DirectInput shows mid-axis until the first report
+        bool r = false;
+        for (int a = 0; a < 8; ++a) if ((lr.present & (1u << a)) && labs(axis_val(s, a) - 32767) > 1) r = true;
+        if (!r) return;
+        lr.real = true;
+        for (int a = 0; a < 8; ++a) lr.rest[a] = axis_val(s, a);
+        return;
+    }
+    for (int a = 0; a < 8; ++a)
+        if ((lr.present & (1u << a)) && labs(axis_val(s, a) - lr.rest[a]) > 8000) x.axMoved = true;
+}
+
 // A gear shifter without "shift" in its name (a generic USB shifter) looks like a small button
-// box: learn it from use. It has no axes and few buttons (a button box has many), and a gear
-// stays held - one button down for over 3 s, which rim / box buttons never are. Named button
-// boxes (ButtonBox1..3) are never taken. Feed every reading of an automatic slot.
+// box: learn it from use. Its axes (if it declares any) never move, and a gear stays held: one
+// button down for over 2 s, later ANOTHER one (the next gear) - rim / box buttons are tapped,
+// and a toggle switch is one button. Buttons already down at the first reading (a mode switch)
+// are ignored until let go once. Named button boxes (ButtonBox1..3) are never taken; neither is
+// anything with ShifterDevice = none. Feed every reading of an automatic slot.
 static bool box_is_shifter(ExtraDev& x, unsigned raw, DWORD now)
 {
-    bool one = raw && !(raw & (raw - 1));
-    if (!one || raw != x.prev) { x.heldSince = one ? now : 0; return false; }
-    return x.heldSince && now - x.heldSince > 3000 && x.nbtn && x.nbtn <= 16 && !x.learn.present && !x.filter[0];
+    if (!x.started) { x.started = true; x.base = raw; x.gear = -1; x.heldSince = 0; }
+    unsigned was = x.prev & ~x.base;
+    x.base &= raw;
+    unsigned g = raw & ~x.base;
+    bool one = g && !(g & (g - 1));
+    if (!one || g != was) { x.heldSince = one ? now : 0; return false; }
+    if (!x.heldSince || now - x.heldSince <= 2000 || x.axMoved || x.filter[0] || shifter_off()) return false;
+    int bit = 0;
+    while (!(g & (1u << bit))) ++bit;
+    if (x.gear < 0) { x.gear = bit; return false; }   // the first gear; wait for a second one
+    return bit != x.gear;
 }
 
 // Under g_wcs: slot k turned out to be a gear shifter - it becomes the shifter (H-pattern: a
@@ -1004,8 +1080,9 @@ static void adopt_shifter(int k)
     x.dev = NULL;
     memset(&g_sh, 0, sizeof g_sh);
     g_sh.mode = g_shiftCfg == SH_AUTO ? SH_H : g_shiftCfg;
-    shim_log("shifter: learned - '%s' holds a button like a gear: it is the shifter (%s)", s.name,
-             g_sh.mode == SH_SEQ ? "sequential, as set" : "H-pattern");
+    shim_log("shifter: learned - '%s' holds its buttons like gears: it is the shifter (%s); saved in "
+             "nascar_calibration.ini [Shifter]", s.name, g_sh.mode == SH_SEQ ? "sequential, as set" : "H-pattern");
+    shifter_save(s.id, s.name);
     controls_summary();
 }
 
@@ -1046,8 +1123,13 @@ static void log_axes(AxLog& a, const DIJOYSTATE2& s, const char* who)
     a.have = true;
 }
 
-// Exclusive foreground access on the root of our own foreground window. Called only while
-// this process has focus.
+// Exclusive foreground access (for the shim's force feedback) on the root of this process'
+// foreground window, else shared. Called only while this process has focus. Steering beats force
+// feedback: when the exclusive Acquire fails - the other NASCAR program (shell / race) or the
+// wheel maker's software still holds the wheel - it is read shared, without the shim's force
+// feedback, until the foreground window changes.
+static bool g_wShared = false;                    // reading shared after a failed exclusive Acquire
+
 static bool ensure_acquired(void)
 {
     HWND fg = GetForegroundWindow();
@@ -1055,17 +1137,28 @@ static bool ensure_acquired(void)
     if (!root) return false;
     if (root != g_coopWnd) {
         ffb_release();
-        g_dev->Unacquire(); g_acquired = false;
+        g_dev->Unacquire(); g_acquired = false; g_wShared = false;
         DWORD level = g_ffb && g_ffbOn ? DISCL_EXCLUSIVE | DISCL_FOREGROUND : DISCL_NONEXCLUSIVE | DISCL_BACKGROUND;
-        if (FAILED(g_dev->SetCooperativeLevel(root, level)) &&
-            FAILED(g_dev->SetCooperativeLevel(root, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) return false;
+        if (FAILED(g_dev->SetCooperativeLevel(root, level))) {
+            if (FAILED(g_dev->SetCooperativeLevel(root, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) return false;
+            g_wShared = true;
+        }
         g_coopWnd = root;
     }
     if (!g_acquired) {
         HRESULT hr = g_dev->Acquire();
+        if (FAILED(hr) && g_ffb && g_ffbOn && !g_wShared) {
+            g_dev->Unacquire();
+            if (SUCCEEDED(g_dev->SetCooperativeLevel(root, DISCL_NONEXCLUSIVE | DISCL_BACKGROUND))) {
+                g_wShared = true;
+                hr = g_dev->Acquire();
+                shim_log("wheel: exclusive access refused (hr 0x%08lX - another program holds the wheel) - read shared, "
+                         "no force feedback from us here: %s", (unsigned long)hr, SUCCEEDED(hr) ? "ok" : "FAILED too");
+            }
+        }
         if (FAILED(hr)) return false;
         g_acquired = true;
-        ffb_create();
+        if (!g_wShared) ffb_create();
     }
     return true;
 }
@@ -1275,6 +1368,7 @@ bool wheel_read(int* steer, int* gas, int* brake, unsigned* buttons)
             }
             unsigned raw = 0;
             for (int i = 0; i < 32; ++i) if (xs.rgbButtons[i] & 0x80) raw |= 1u << i;
+            if (k != X_SHIFTER) watch_axes(x, xs);
             if (k != X_SHIFTER && !g_x[X_SHIFTER].dev && box_is_shifter(x, raw, GetTickCount())) {
                 adopt_shifter(k);
                 continue;                          // read as the shifter from the next frame
@@ -1342,4 +1436,5 @@ void wheel_attach(void)
 {
     InitializeCriticalSection(&g_wcs);
     InitializeCriticalSection(&g_dcs);
+    g_discEv = CreateEventA(NULL, TRUE, FALSE, NULL);
 }

@@ -1435,3 +1435,32 @@ working install.
 * **The shim's pedal answer was correct all along.** The shim log showed the OEM `GvrIO`
   answering nothing for axes 1 and 2 (range -1..-1), and the shim reporting 0..255. Its range
   test was still tightened, to the script's own rule (max - min < 40).
+
+## 17. The front end's renderer and display device (2026-10-27)
+
+Both front ends are Anark players (1.1: Client 3.0; 2.0.2: Client 4.0) with three renderers:
+Direct3D 7 through D3DX7, OpenGL, and software (Pixomatic in 1.1).
+
+* **Choice.** The value `ClientRenderer` under `HKCU\Software\Anark\Client\<3.0|4.0>\Preferences`
+  wins when set; otherwise Direct3D (3) if available, then OpenGL (2), then software. `DisableGL`,
+  `DisableDX7` and `DisableSW` (string `"1"`) remove one from the list. 1.1 runs with
+  `DisableGL = "1"`, as on the cabinet, so it uses Direct3D 7; 2.0.2 uses OpenGL because its
+  Direct3D path deadlocks on alt-tab (section 13 / MODS.md).
+* **OpenGL test** (2.0.2 `sub_63B26C60`, `sub_63B44590`): a hidden window at 0,0, the description
+  of pixel format #1 handed to `ChoosePixelFormat`, `wglCreateContext`, then all four of
+  `GL_EXT_bgra GL_WIN_swap_hint GL_ARB_multitexture GL_EXT_texture_env_combine` must appear in
+  `glGetString(GL_EXTENSIONS)`, else OpenGL is unavailable (greyed out in the renderer menu). The
+  renderer itself only logs missing features and null-checks `glAddSwapHintRectWIN`. Current Intel
+  and NVIDIA drivers list all four; Windows' software OpenGL 1.1 ("GDI Generic") lacks two - which
+  is what a window on a screen driven by a virtual display adapter gets.
+* **Direct3D device list** (1.1 `sub_63D1E912`, D3DX7 `CDDrawDeviceList`): `DirectDrawEnumerateExA`
+  with flags 7 (attached secondary, detached secondary and non-display devices); every device that
+  opens is kept with its monitor, and the render context creates DirectDraw with the chosen
+  device's GUID (`DX7RenderContext.cpp`).
+* **Win32_VideoController** (WMI: `AdapterRAM`, `DriverVersion`, `VideoProcessor`, current mode) is
+  only collected into a system-information report; it does not choose the renderer.
+
+What the package does about it: the launcher tests OpenGL like the 2.0.2 front end before every
+start and writes `ClientRenderer` (hardware OpenGL 1.3+ = OpenGL, else Direct3D; `[Display]
+Renderer`); the shim adds the four old extension names for hardware OpenGL 1.3+, offers only
+attached displays to the Direct3D device list and logs every device and the one opened.

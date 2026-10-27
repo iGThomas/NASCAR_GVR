@@ -38,6 +38,8 @@ others. Tested: MP3, 44.1 kHz, stereo, 128 and 320 kbps. Not tested: 48 kHz, mon
 | Problem on a PC | Fix |
 |---|---|
 | Front end froze on alt-tab (DirectDraw exclusive full screen deadlocks on Windows 10/11) | Player uses its OpenGL renderer (`HKCU\Software\Anark\Client\4.0\Preferences ClientRenderer = 2`) |
+| Front end showed no picture (only "Please Wait", music playing) where Windows offers only software OpenGL, e.g. a screen driven by a virtual display adapter | Launcher tests OpenGL as the front end does at every start: hardware OpenGL 1.3+ = OpenGL, else Direct3D (`[Display] Renderer = auto`; `opengl` / `directx` force one) |
+| OpenGL greyed out on drivers that list only the newer extension names | Shim adds the old names (`GL_EXT_bgra`, `GL_WIN_swap_hint`, `GL_ARB_multitexture`, `GL_EXT_texture_env_combine`) for hardware OpenGL 1.3+, which has these built in (*in memory*; `GVRIOSHIM_NO_GL_FIX=1` turns it off) |
 | Start-up took ~23 s: a fixed 15 s wait for the cabinet's I/O board to boot | `Shell.am`: wait 0.5 s (same as NASCAR Racing 1.1); start to attract ~9 s |
 | Start-up froze when another window had the focus during loading | Cabinet display tweaks (`nvcpl`, `GammaSet`) are skipped and no longer pause the player (`Shell.am`) |
 | Attract loop crashed at its third slide | Shim answers the IO-board messages a PC has no board for |
@@ -52,6 +54,18 @@ others. Tested: MP3, 44.1 kHz, stereo, 128 and 320 kbps. Not tested: 48 kHz, mon
 | Front end crashed (or never showed the attract) on Windows set to a day/month date format, e.g. Dutch, German, Japanese | Shim runs the front end with US region settings (*in memory*; `GVRIOSHIM_NO_LOCALE_FIX=1` turns it off) |
 | Nightly restart prompt restarted the PC | `NASCARPlugIn.dll` patched (file): restart check always "not yet"; shim also blocks `shutdown.exe` and the Windows restart calls (*in memory*) |
 | Database password of the original cabinet written to the log | Password masked in `gvrsqlite.log` |
+| Front end needs Anark's AKLog2 logger, which never shipped (crashed at start without it) | A stand-in `AKLogShim.dll` is registered; it answers only this front end, so NASCAR Racing 1.1 on the same PC is not affected |
+
+### Both games
+
+| Problem on a PC | Fix |
+|---|---|
+| DirectX device list included detached and non-display devices (an inactive virtual monitor could be picked) | Only attached displays are offered; every device and the one the renderer opens are written to the log (*in memory*; `GVRIOSHIM_NO_DD_FIX=1` turns it off) |
+| PC wheel that does not report itself as a wheel (direct-drive bases such as MOZA) steered in the menus but not in the race: exclusive access for force feedback was refused and the wheel was then not read at all | Wheel read shared when exclusive access is refused (steering kept, no force feedback from the shim in that program) |
+| A generic USB H-shifter acted as extra buttons (gears changed the camera or shifted up / down) until it was recognised, and each race had to recognise it again | Recognised from two held gears even when it reports unused axes or a held mode switch; remembered in `nascar_calibration.ini` `[Shifter]` (`[Wheel] ShifterDevice = none` turns shifters off) |
+| Transmission screen ignored a PC wheel when the first menu message came before the wheel was found | Menu selection moves to the shim as soon as a PC wheel or pedal box is found |
+| Front end start-up could wait for a slow controller scan (some USB devices answer slowly) | The scan runs in the background; start-up waits for it at most 3 s |
+| Front end crashed while closing (exit code 0xC0000005 in the log) | Shim's I/O-board watchdog stops when `GvrIO_oem.dll` is unloaded |
 
 ## NASCAR Racing 1.1
 
@@ -65,4 +79,5 @@ database are described in `docs/findings/NASCAR_FINDINGS.md`.
 | Race picture blurry on screens wider than 4096 pixels (e.g. 5120x1440) | Shim accepts display modes up to 16384 pixels (*in memory*) |
 | PC wheel with pedals, a gear shifter, a separate rim or button boxes on their own USB cables ignored (only one controller was read) | All read together and set up automatically (overrides under `[Wheel]`) |
 | Database password of the original cabinet written to the log | Password masked in `gvrsqlite.log` |
+| With NASCAR Team Racing installed on the same PC, the front end loaded Team Racing's AKLog2 stand-in | Shim answers "not registered" for AKLog2 in this front end, as on a PC without it (*in memory*) |
 

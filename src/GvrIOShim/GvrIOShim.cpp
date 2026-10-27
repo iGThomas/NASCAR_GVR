@@ -80,6 +80,7 @@
 #include "GvrIOWheel.h"
 
 static const DWORD kHeartbeatRva      = 0x0000C02C;  // cGvrIO's worker-ack byte
+static volatile DWORD g_watchdogTid = 0;             // its expected AV at exit is not logged (veh_handler)
 static const int   kZeroMsBeforeWeAct = 120;         // let a real worker win first
 
 static bool g_logging = false;
@@ -676,17 +677,29 @@ static DWORD WINAPI WatchdogThread(LPVOID)
 
     int zeroMs = 0;
     unsigned supplied = 0;
+    g_watchdogTid = GetCurrentThreadId();
     for (;;) {
-        if (*flag == 0) {
-            if (++zeroMs >= kZeroMsBeforeWeAct) {
-                *flag = 1;                 // no worker is coming; unblock teardown
-                zeroMs = 0;
-                if (++supplied <= 8 || (supplied % 100) == 0)
-                    logf("heartbeat supplied (#%u) - nothing acked within %d ms",
-                         supplied, kZeroMsBeforeWeAct);
+        // At exit GvrIO_oem.dll is unloaded while this thread still runs: reading its heartbeat
+        // then crashed the shell on exit (0xC0000005). The guard ends the thread instead. No
+        // GetModuleHandle check here: it takes the loader lock, which the OEM teardown may hold
+        // while it waits for this very heartbeat. Never stop earlier either: another cGvrIO may
+        // be torn down later and needs it.
+        __try {
+            if (*flag == 0) {
+                if (++zeroMs >= kZeroMsBeforeWeAct) {
+                    *flag = 1;             // no worker is coming; unblock teardown
+                    zeroMs = 0;
+                    if (++supplied <= 8 || (supplied % 100) == 0)
+                        logf("heartbeat supplied (#%u) - nothing acked within %d ms",
+                             supplied, kZeroMsBeforeWeAct);
+                }
             }
+            else zeroMs = 0;               // a real worker is alive; stay out of it
         }
-        else zeroMs = 0;                   // a real worker is alive; stay out of it
+        __except (EXCEPTION_EXECUTE_HANDLER) {   // GvrIO_oem.dll already unloaded
+            logf("watchdog: GvrIO_oem.dll is gone - stopped");
+            return 0;
+        }
         Sleep(1);
     }
 }
@@ -926,11 +939,17 @@ void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
         return 0;
     }
     if (g_isShell && g_amCb && id >= 0x0F && id <= 0x14 && oemFn) {
-        if (g_selOwn < 0) {
+        // Decided at the first selection message; while the OEM owns it, a PC wheel or pedal box
+        // found later (the controller scan runs in the background) still takes over - OEM
+        // Steering.dll also reports a calibrated range for a PC wheel, so "OEM" alone was latched
+        // when the first message beat the scan.
+        if (g_selOwn < 0 || (g_selOwn == 0 && wheel_present())) {
             int t[8] = { 1, 5, 0 };
             LONG own = (wheel_present() || !real_pedals(oemFn, (sMessage*)t)) ? 1 : 0;
-            InterlockedExchange(&g_selOwn, own);
-            logf("menu selection: %s", own ? "keyboard / pad / PC wheel (no cabinet wheel)" : "cabinet wheel (OEM)");
+            if (own != g_selOwn) {
+                InterlockedExchange(&g_selOwn, own);
+                logf("menu selection: %s", own ? "keyboard / pad / PC wheel (no cabinet wheel)" : "cabinet wheel (OEM)");
+            }
         }
         if (g_selOwn == 1) {
             int* f = (int*)msg;
@@ -977,7 +996,8 @@ void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
     // while max - min < 40) and the operator Control Test (Start + Music) calibrate them.
     if (msg && ((int*)msg)[0] == 1 && (id == 6 || id == 0x39 || id == 0x3A || id == 0x53) &&
         GetEnvironmentVariableA("GVRIOSHIM_NO_IOBOARD", NULL, 0) == 0) {
-        wheel_discover_first();
+        { int v; pad_axis(1, &v); }            // starts the pad thread, which scans for controllers
+        wheel_discover_first();                // waits for that scan at most once, 3 s
         if (id == 0x53) {
             if (wheel_cal_reset()) logf("pedal calibration reset by the shell (msg 0x53)");
             return r;
@@ -1170,6 +1190,8 @@ static LONG WINAPI veh_handler(EXCEPTION_POINTERS* ep)
         code != EXCEPTION_ILLEGAL_INSTRUCTION &&   // 0xC000001D
         code != EXCEPTION_PRIV_INSTRUCTION)        // 0xC0000096
         return EXCEPTION_CONTINUE_SEARCH;
+    if (code == EXCEPTION_ACCESS_VIOLATION && GetCurrentThreadId() == g_watchdogTid)
+        return EXCEPTION_CONTINUE_SEARCH;          // the watchdog's guarded read at exit (WatchdogThread)
     if (InterlockedExchange(&g_inVeh, 1) != 0) return EXCEPTION_CONTINUE_SEARCH;  // reentrancy
     if (InterlockedIncrement(&g_vehCount) <= 60) {
         __try {

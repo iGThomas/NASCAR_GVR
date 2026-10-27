@@ -34,5 +34,6 @@ bool wheel_steers(void);
 bool wheel_cal_axis(int axis, int* raw, int* mn, int* mx);
 // Reset it (msg 0x53: the shell's calibration screen, operator Control Test Start + Music).
 bool wheel_cal_reset(void);
-// One discovery pass now if none ran yet (the shell's start-up pedal check comes early).
+// The shell's start-up pedal check comes early: wait once, at most 3 s, for the pad thread's
+// first discovery pass (start the pad thread first). Never scans on the caller's thread.
 void wheel_discover_first(void);
