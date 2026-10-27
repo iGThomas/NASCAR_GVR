@@ -6,12 +6,13 @@
 param(
     [string]$Db = "",
     [string]$Provider = "",
-    [string]$Sqlite3 = "D:\NFSU_GVR\GvrSqlite\deploy\sqlite3.dll",
+    [string]$Sqlite3 = "",
     [switch]$KeepTempDir
 )
 
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
+if (!$Sqlite3) { $Sqlite3 = Join-Path (Split-Path -Parent $here) "Deploy\sqlite3.dll" }
 $nascar = Split-Path -Parent $here
 if ([string]::IsNullOrEmpty($Db)) { $Db = Join-Path $nascar "Extracted\Schema\game.db" }
 if ([string]::IsNullOrEmpty($Provider)) { $Provider = Join-Path $nascar "Build\GvrSqlite.dll" }

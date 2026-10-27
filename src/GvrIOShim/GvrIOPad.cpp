@@ -493,7 +493,7 @@ static void read_pad(PadState* p)
 
 // ------------------------------------------------------------------ the button map
 // Every action is a cabinet key from Game\config\GvrIO.xml, except the shifter and quit.
-enum { S_KEY, S_LEFT, S_RIGHT, S_SHIFTUP, S_SHIFTDOWN, S_QUIT, S_NONE, S_NFSU };
+enum { S_KEY, S_LEFT, S_RIGHT, S_SHIFTUP, S_SHIFTDOWN, S_QUIT, S_NONE, S_IGNORED };
 struct ActDef { const char* name; char key; int spec; };
 
 // In a race (NASCAR_GVR.exe). What each cabinet button does there (NASCAR_FINDINGS 14.2):
@@ -512,7 +512,7 @@ static const ActDef RACE_ACTS[] = {
     { "quit",      0,  S_QUIT },    { "abort",     0, S_QUIT },
     { "none",      0,  S_NONE },
     // Actions with nothing to do in NASCAR - accepted and ignored so such a map still loads
-    { "ebrake",    0,  S_NFSU }, { "confirm", 0, S_NFSU }, { "skipintro", 0, S_NFSU },
+    { "ebrake",    0,  S_IGNORED }, { "confirm", 0, S_IGNORED }, { "skipintro", 0, S_IGNORED },
 };
 // In the menus (AMPlayer.exe): the operator menu treats View/Music/LookBack as
 // up/down/back (on-screen legend), Start selects everywhere.
@@ -525,7 +525,7 @@ static const ActDef FRONT_ACTS[] = {
     { "left",     'd', S_LEFT },  { "navleft",  'd', S_LEFT },
     { "right",    'g', S_RIGHT }, { "navright", 'g', S_RIGHT },
     { "none",      0,  S_NONE },
-    { "accept",    0,  S_NFSU }, { "backspace", 0, S_NFSU }, { "card", 0, S_NFSU },
+    { "accept",    0,  S_IGNORED }, { "backspace", 0, S_IGNORED }, { "card", 0, S_IGNORED },
 };
 
 static const struct { const char* name; unsigned ub; } PAD_BUTTONS[] = {
@@ -570,7 +570,7 @@ static void map_add(PadMap& m, unsigned ub, const char* action)
     const ActDef* a = find_act(m, action);
     if (!a) { shim_log("pad cfg: [%s] unknown action '%s' - ignored", m.section, action); return; }
     if (a->spec == S_NONE) return;
-    if (a->spec == S_NFSU) { shim_log("pad cfg: [%s] '%s' has no NASCAR equivalent - ignored", m.section, action); return; }
+    if (a->spec == S_IGNORED) { shim_log("pad cfg: [%s] '%s' has no NASCAR equivalent - ignored", m.section, action); return; }
     if (m.n < 32) { m.b[m.n].ub = ub; m.b[m.n].act = a; ++m.n; }
 }
 
@@ -715,8 +715,10 @@ static PadState pad_get(void)
     LeaveCriticalSection(&g_cs);
     // A steering wheel (GvrIOWheel.cpp) drives steering and the pedals; its buttons add to a pad's.
     int ws, wg, wb; unsigned wbtn;
+    wheel_test_feed(p.present, p.steer, p.gas, p.brake);  // developer test only (GVRIOSHIM_TEST_PAD_AS_WHEEL)
     if (wheel_read(&ws, &wg, &wb, &wbtn)) {
-        p.steer = ws; p.gas = wg; p.brake = wb; p.btn |= wbtn; p.present = true;
+        if (wheel_steers()) p.steer = ws;       // a pedal box alone leaves steering to the pad
+        p.gas = wg; p.brake = wb; p.btn |= wbtn; p.present = true;
     }
     if (g_pedalsStick && p.present) {
         int up = p.ry > 0 ? p.ry * 2 : 0, down = p.ry < 0 ? -p.ry * 2 : 0;   // 0..254
@@ -760,7 +762,7 @@ static void press(BYTE* st, char c)
 static void inject_keys(BYTE* st)
 {
     PadState p = pad_get();
-    if (!p.present || !pad_process_has_focus()) { g_prevBtn = 0; g_quitSince = 0; return; }
+    if (!p.present || !pad_process_has_focus()) { g_prevBtn = 0; g_quitSince = 0; g_lastKeys[0] = 0; return; }
     unsigned b = p.btn, edge = b & ~g_prevBtn;
     g_prevBtn = b;
 
@@ -963,6 +965,69 @@ static bool patch_import(HMODULE mod, const char* dll, const char* fn, void* hoo
     return false;
 }
 
+// ---------------------------------------------- cabinet display-tweak taming
+// The 2.0.2 shell's startUpChecks launch "rundll32 nvcpl.dll,dtcfg setmode 1 800 600 ..."
+// (a hardcoded startup one AND a config-driven one) plus GammaSet.exe, to force the desktop
+// to a cabinet resolution/gamma. On a normal PC that resizes the screen out from under the
+// borderless window; the shell's render loop then storms (CAKExceptionClass flood) and
+// startUpChecks stalls. We can't edit the compiled Anark .am, so hook the host's
+// CreateProcessA and divert ONLY those launches to a harmless no-op (cmd /c exit) so the
+// engine's launch/wait completes without touching the display. The game launch
+// (NASCAR_GVR.exe) and everything else pass through untouched. Off with GVRIOSHIM_NO_TAMING=1.
+typedef BOOL (WINAPI *CreateProcessA_t)(LPCSTR, LPSTR, LPSECURITY_ATTRIBUTES, LPSECURITY_ATTRIBUTES,
+        BOOL, DWORD, LPVOID, LPCSTR, LPSTARTUPINFOA, LPPROCESS_INFORMATION);
+static CreateProcessA_t g_realCreateProcessA = NULL;
+
+static bool is_display_tweak(const char* s)
+{
+    if (!s) return false;
+    char low[1024]; int i = 0;
+    for (; s[i] && i < 1023; ++i) { char c = s[i]; if (c >= 'A' && c <= 'Z') c += 32; low[i] = c; }
+    low[i] = 0;
+    return strstr(low, "nvcpl") || strstr(low, "gammaset") || strstr(low, "changescreenresolution");
+}
+
+// The cabinet reboots itself nightly: once 24 h have passed since the last recorded Windows
+// restart (which on a PC is never recorded), the attract loads WindowsRestart.am, counts down
+// 30 s and runs "<Shell>\Bin\shutdown.exe -r -t 0 -f" - a forced, immediate restart of the
+// player's PC. Never let the game start it (both titles ship that shutdown.exe).
+static bool is_restart(const char* s)
+{
+    if (!s) return false;
+    char low[1024]; int i = 0;
+    for (; s[i] && i < 1023; ++i) { char c = s[i]; if (c >= 'A' && c <= 'Z') c += 32; low[i] = c; }
+    low[i] = 0;
+    return strstr(low, "shutdown") || strstr(low, "exitwindows") || strstr(low, "reboot");
+}
+
+static BOOL WINAPI hook_CreateProcessA(LPCSTR app, LPSTR cmd, LPSECURITY_ATTRIBUTES pa,
+        LPSECURITY_ATTRIBUTES ta, BOOL inh, DWORD flags, LPVOID env, LPCSTR dir,
+        LPSTARTUPINFOA si, LPPROCESS_INFORMATION pi)
+{
+    if ((cmd && is_restart(cmd)) || (app && is_restart(app))) {
+        shim_log("taming: BLOCKED a PC restart the cabinet software asked for -> %s", cmd ? cmd : app);
+        static char benign[] = "cmd.exe /c exit";
+        return g_realCreateProcessA(NULL, benign, pa, ta, inh, flags | CREATE_NO_WINDOW, env, dir, si, pi);
+    }
+    if ((cmd && is_display_tweak(cmd)) || (app && is_display_tweak(app))) {
+        shim_log("taming: suppressed cabinet display tweak -> %s", cmd ? cmd : app);
+        static char benign[] = "cmd.exe /c exit";
+        return g_realCreateProcessA(NULL, benign, pa, ta, inh, flags | CREATE_NO_WINDOW, env, dir, si, pi);
+    }
+    return g_realCreateProcessA(app, cmd, pa, ta, inh, flags, env, dir, si, pi);
+}
+
+static void taming_hook_display(void)
+{
+    if (g_realCreateProcessA) return;
+    if (GetEnvironmentVariableA("GVRIOSHIM_NO_TAMING", NULL, 0) > 0) return;
+    if (patch_import(GetModuleHandleA(NULL), "KERNEL32.dll", "CreateProcessA",
+                     (void*)hook_CreateProcessA, (void**)&g_realCreateProcessA))
+        shim_log("taming: CreateProcessA hooked - nvcpl/GammaSet display tweaks suppressed");
+    else
+        shim_log("taming: could NOT hook CreateProcessA - display tweaks NOT suppressed");
+}
+
 // ------------------------------------------------------------------ public
 void pad_attach(HMODULE self, bool isShell)
 {
@@ -971,6 +1036,26 @@ void pad_attach(HMODULE self, bool isShell)
     g_off = GetEnvironmentVariableA("GVRIOSHIM_NO_PAD", NULL, 0) > 0;
     InitializeCriticalSection(&g_cs);
     wheel_attach();
+    if (isShell) taming_hook_display();   // suppress the shell's cabinet display-mode launches
+}
+
+// 2.0.2's GvrIO (link stamp 0x480FA1CF) reads the keyboard through DirectInput and then
+// overwrites that same 256-byte buffer with USER32 GetKeyboardState (virtual-key indexed),
+// so the scan codes injected above were lost and the pad's buttons raised no cabinet events
+// (its steering, read separately, still worked). Add the held keys there as well, by virtual
+// key. 1.1's GvrIO does not import GetKeyboardState, so this hook is simply not installed.
+typedef BOOL (WINAPI *PFN_GetKeyboardState)(PBYTE);
+static PFN_GetKeyboardState g_realGetKeyboardState = NULL;
+
+static BOOL WINAPI hook_GetKeyboardState(PBYTE st)
+{
+    BOOL ok = g_realGetKeyboardState(st);
+    if (ok && st)
+        for (const char* c = g_lastKeys; *c; ++c) {
+            UINT vk = *c == '<' ? VK_LEFT : *c == '>' ? VK_RIGHT : (UINT)toupper((unsigned char)*c);
+            if (vk < 256) st[vk] |= 0x80;
+        }
+    return ok;
 }
 
 void pad_hook_gvrio(HMODULE oem)
@@ -982,6 +1067,8 @@ void pad_hook_gvrio(HMODULE oem)
         shim_log("pad: GvrIO_oem.dll DirectInput8Create redirected");
     else
         shim_log("pad: could not find GvrIO_oem.dll's DirectInput8Create import - pad buttons disabled");
+    if (patch_import(oem, "USER32.dll", "GetKeyboardState", (void*)hook_GetKeyboardState, (void**)&g_realGetKeyboardState))
+        shim_log("pad: GvrIO_oem.dll GetKeyboardState redirected (2.0.2 GvrIO)");
 }
 
 bool pad_axis(int axis, int* value)

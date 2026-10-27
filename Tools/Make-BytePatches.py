@@ -19,7 +19,7 @@ import sys
 FILES = [
     r"Shell\bin\Dongle.dll",
     r"Shell\bin\PlugIns\HerculesPlugIn.dll",
-    r"Shell\bin\PlugIns\NASCARPlugIn.dll",
+    r"Shell\bin\PlugIns\NASCARPlugIn.dll",   # incl. 0xD090 nightly-restart check -> "not yet" (the working install must have it)
     r"Shell\Shell.am",
     r"Shell\NASCAR_Attract.am",
     r"Shell\NASCAR_Selection.am",

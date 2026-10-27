@@ -159,6 +159,15 @@ static void log_pc_config(void)
         logf("display : %lux%lu %lubpp @ %luHz (desktop)",
              dm.dmPelsWidth, dm.dmPelsHeight, dm.dmBitsPerPel, dm.dmDisplayFrequency);
     logf(".net 1.1: %s", dotnet11_installed() ? "yes" : "NO (v1.1.4322\\mscorlib.dll missing)");
+    // The shell's .NET 1.1 code parses US-format dates; the 2.0.2 shim runs the shell as en-US
+    // whatever this says. Logged so a report shows the PC's own format at a glance.
+    {
+        WCHAR loc[LOCALE_NAME_MAX_LENGTH] = L"", sd[64] = L"", tf[64] = L"";
+        GetUserDefaultLocaleName(loc, LOCALE_NAME_MAX_LENGTH);
+        GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_SSHORTDATE, sd, 64);
+        GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_STIMEFORMAT, tf, 64);
+        logf("region  : %ls (date %ls, time %ls, LCID 0x%04lX)", loc, sd, tf, (unsigned long)GetUserDefaultLCID());
+    }
 
     logf("---- end PC configuration ----");
 }

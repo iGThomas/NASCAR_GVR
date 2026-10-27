@@ -93,5 +93,15 @@ void reg_attach(void)
         privreg_trace(path);
         shim_log("registry: call trace -> %s", path);
     }
+    // Both shells (AMPlayer.exe stamp 0x47C34847 = 2.0.2, 0x46AFA277 = 1.1): .NET 1.1 reads the user's date format
+    // straight from HKCU\Control Panel\International, so with that key hidden it uses the
+    // en-US defaults patch_us_locale (GvrIOShim.cpp) gives this process. GVRIOSHIM_NO_LOCALE_FIX=1 skips both.
+    {
+        const BYTE* host = (const BYTE*)GetModuleHandleA(NULL);
+        const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(host + ((const IMAGE_DOS_HEADER*)host)->e_lfanew);
+        DWORD stamp = nt->FileHeader.TimeDateStamp;
+        if ((stamp == 0x47C34847 || stamp == 0x46AFA277) && GetEnvironmentVariableA("GVRIOSHIM_NO_LOCALE_FIX", NULL, 0) == 0)
+            privreg_hide_user_key("Control Panel\\International");
+    }
     privreg_attach(ini, &kNascar, shim_log);
 }

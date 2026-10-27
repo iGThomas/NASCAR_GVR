@@ -36,8 +36,8 @@
 //       watchdog and not a blanket override: it only writes the flag after it
 //       has stayed 0 for ~120 ms, so a live worker always wins the race and
 //       the genuine synchronisation is preserved. Blanket-stubbing cabinet
-//       probes is what caused the long hangs in the NFSU project (see
-//       shell-oem-abi-forwarding), and NOPping the JZ outright got the game to
+//       probes is known to cause long, silent hangs, and NOPping the JZ
+//       outright got the game to
 //       Game::CreateManagers and then a heap access violation.
 //    3. The HASP dongle gate in NASCAR_GVR.exe is stubbed in memory, so the
 //       game starts with no cabinet hardware. See patch_dongle_gate below for
@@ -166,6 +166,46 @@ static const BYTE kDongleFnSig[16] = {
     0x3B, 0x15, 0x90, 0xA2, 0x77, 0x00, 0x7F, 0x40
 };
 
+// ---- locate a target by signature, so a build at a different address still patches --------
+// The v1.1 fast paths below are unchanged; these scanners are only the fallback for other
+// builds (NASCAR Team Racing 2.0.2 - gate 0x675B10, mode 0x5079B0 - nascar_gvr_old, and other
+// disc pressings), so a shifted address can no longer silently skip a patch.
+static BYTE*  g_textBase;
+static SIZE_T g_textSize;
+static void find_text_section(void)
+{
+    if (g_textBase) return;
+    HMODULE host = GetModuleHandleA(NULL); if (!host) return;
+    BYTE* base = (BYTE*)host;
+    IMAGE_DOS_HEADER* dos = (IMAGE_DOS_HEADER*)base;
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) return;
+    IMAGE_NT_HEADERS* nt = (IMAGE_NT_HEADERS*)(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) return;
+    IMAGE_SECTION_HEADER* sec = IMAGE_FIRST_SECTION(nt);
+    for (unsigned i = 0; i < nt->FileHeader.NumberOfSections; i++)
+        if (memcmp(sec[i].Name, ".text", 5) == 0) {
+            g_textBase = base + sec[i].VirtualAddress;
+            g_textSize = sec[i].Misc.VirtualSize;
+            return;
+        }
+}
+// Find pat[] in .text. mask==NULL means every byte matters; otherwise a 0 mask byte is a wildcard.
+static BYTE* find_pattern(const BYTE* pat, const BYTE* mask, SIZE_T len)
+{
+    find_text_section();
+    if (!g_textBase || g_textSize < len) return NULL;
+    for (SIZE_T o = 0; o + len <= g_textSize; o++) {
+        BYTE* p = g_textBase + o;
+        SIZE_T k = 0;
+        for (; k < len; k++) {
+            if (mask && !mask[k]) continue;     // wildcard
+            if (p[k] != pat[k]) break;
+        }
+        if (k == len) return p;
+    }
+    return NULL;
+}
+
 static void patch_dongle_gate(void)
 {
     if (GetEnvironmentVariableA("GVRIOSHIM_NO_DONGLE_PATCH", NULL, 0) > 0) {
@@ -181,41 +221,61 @@ static void patch_dongle_gate(void)
 
     char exe[MAX_PATH] = { 0 };
     GetModuleFileNameA(NULL, exe, MAX_PATH);
+    bool v202 = false;   // set on the signature-scanned (non-v1.1) path
 
     if (memcmp(fn, kDongleFnSig, sizeof(kDongleFnSig)) != 0) {
-        // Either this is not NASCAR_GVR.exe or it is a different build. Either
-        // way, writing 39 bytes of code over something we cannot identify is
-        // exactly how you get an unexplainable crash, so don't.
-        logf("dongle patch: signature mismatch at %p in '%s' - NOT patching", fn, exe);
-        return;
+        // Not v1.1 at the known address. Find the gate by signature so other builds still
+        // patch (NASCAR Team Racing 2.0.2 etc.). The compared bound address (bytes 10..13)
+        // is wildcarded; the shape is confirmed by imul eax,eax,0x1B at +0x12 and
+        // lea esi,[eax+<record>] at +0x18, and the record address is read from that lea's
+        // disp32 - so no per-build constant is needed. If it is genuinely absent this is not
+        // the race (e.g. the shim is in the shell), and writing 39 bytes over an unidentified
+        // address is how you get an unexplainable crash, so we do nothing.
+        static const BYTE sig[16]  = { 0x8B,0x54,0x24,0x04, 0x85,0xD2, 0x7C,0x48, 0x3B,0x15, 0,0,0,0, 0x7F,0x40 };
+        static const BYTE mask[16] = { 1,1,1,1, 1,1, 1,1, 1,1, 0,0,0,0, 1,1 };
+        BYTE* hit = find_pattern(sig, mask, sizeof(sig));
+        if (!hit || !(hit[0x12] == 0x6B && hit[0x13] == 0xC0 && hit[0x14] == 0x1B &&
+                      hit[0x18] == 0x8D && hit[0x19] == 0xB0)) {
+            logf("dongle patch: gate not found (not the race, or an unknown build) in '%s' - NOT patching", exe);
+            return;
+        }
+        fn     = hit;
+        record = (BYTE*)(ULONG_PTR)(*(DWORD*)(hit + 0x1A));   // the lea's disp32 = record VA
+        v202   = true;
+        logf("dongle patch: located gate by signature at %p, record %p (build != v1.1)", fn, record);
     }
 
-    BYTE stub[] = {
-        0x8B, 0x44, 0x24, 0x04,                         // mov  eax,[esp+4]   ; idx
-        0x85, 0xC0,                                     // test eax,eax
-        0x75, 0x1C,                                     // jnz  fail          ; only index 0
-        0xB8, 0x00, 0x00, 0x00, 0x00,                   // mov  eax,<record>  ; [9] patched below
-        0xC6, 0x00, 0x01,                               // mov  byte [eax],1  ; present
-        0xC7, 0x40, 0x01, 'N', 'A', 'S', 'C',           // mov  dword [eax+1],"NASC"
-        0xC7, 0x40, 0x05, 'A', 'R', 0x00, 0x00,         // mov  dword [eax+5],"AR\0\0"
-        0xB8, 0x01, 0x00, 0x00, 0x00,                   // mov  eax,1         ; success
-        0xC3,                                           // ret
-        0x33, 0xC0,                                     // fail: xor eax,eax
-        0xC3                                            //       ret
-    };
-    *(DWORD*)(stub + 9) = (DWORD)(ULONG_PTR)record;
+    // Build the stub. Every build gets present=1 and game="NASCAR". NASCAR Team Racing 2.0.2's
+    // race-gate (cleartext validator at 0x45F498) ALSO strcmp's the VERSION field (record+8)
+    // against "2.0" and skips INIT/RESTART/DYN (the race) -> POST unless it matches. Record
+    // layout, confirmed by static RE: +0 present, +1 game, +8 version, +0xC region, +0x19 cab;
+    // only game and version are hard-gated. v1.1 does not hard-check the version, so the version
+    // write is added ONLY on the signature-scanned path, keeping the shipped v1.1 stub identical.
+    BYTE stub[64]; int n = 0;
+    stub[n++]=0x8B; stub[n++]=0x44; stub[n++]=0x24; stub[n++]=0x04;                 // mov eax,[esp+4] ; idx
+    stub[n++]=0x85; stub[n++]=0xC0;                                                 // test eax,eax
+    int jnz=n; stub[n++]=0x75; stub[n++]=0x00;                                      // jnz fail (filled below)
+    stub[n++]=0xB8; *(DWORD*)(stub+n)=(DWORD)(ULONG_PTR)record; n+=4;               // mov eax,<record>
+    stub[n++]=0xC6; stub[n++]=0x00; stub[n++]=0x01;                                 // mov byte[eax],1 ; present
+    stub[n++]=0xC7; stub[n++]=0x40; stub[n++]=0x01; stub[n++]='N'; stub[n++]='A'; stub[n++]='S'; stub[n++]='C'; // [eax+1]="NASC"
+    stub[n++]=0xC7; stub[n++]=0x40; stub[n++]=0x05; stub[n++]='A'; stub[n++]='R'; stub[n++]=0x00; stub[n++]=0x00; // [eax+5]="AR\0\0"
+    if (v202) { stub[n++]=0xC7; stub[n++]=0x40; stub[n++]=0x08; stub[n++]='2'; stub[n++]='.'; stub[n++]='0'; stub[n++]=0x00; } // [eax+8]="2.0\0"
+    stub[n++]=0xB8; stub[n++]=0x01; stub[n++]=0x00; stub[n++]=0x00; stub[n++]=0x00; // mov eax,1 ; success
+    stub[n++]=0xC3;                                                                 // ret
+    int fail=n; stub[n++]=0x33; stub[n++]=0xC0; stub[n++]=0xC3;                     // fail: xor eax,eax ; ret
+    stub[jnz+1] = (BYTE)(fail - (jnz+2));                                           // resolve jnz -> fail
 
     DWORD old = 0;
-    if (!VirtualProtect(fn, sizeof(stub), PAGE_EXECUTE_READWRITE, &old)) {
+    if (!VirtualProtect(fn, n, PAGE_EXECUTE_READWRITE, &old)) {
         logf("dongle patch: VirtualProtect failed (%lu)", GetLastError());
         return;
     }
-    memcpy(fn, stub, sizeof(stub));
-    VirtualProtect(fn, sizeof(stub), old, &old);
-    FlushInstructionCache(GetCurrentProcess(), fn, sizeof(stub));
+    memcpy(fn, stub, n);
+    VirtualProtect(fn, n, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), fn, n);
 
-    logf("dongle gate stubbed: %u bytes at %p, record at %p (host base %p, '%s')",
-         (unsigned)sizeof(stub), fn, record, host, exe);
+    logf("dongle gate stubbed: %d bytes at %p, record at %p%s (host base %p, '%s')",
+         n, fn, record, v202 ? ", version=\"2.0\"" : "", host, exe);
 }
 
 // ------------------------------------------------- display-mode size limit
@@ -229,11 +289,11 @@ static void patch_dongle_gate(void)
 // list, so "-width 1920 -height 1080" is rejected ("... resolution 1920 x 1080 passed on
 // the command line is invalid!") for fullscreen AND windowed, and the race renders at a
 // smaller mode that the window or monitor then stretches - visibly blurry.
-// We raise the maximum to 4096 in memory before main() runs. The 10 instruction bytes
+// We raise the maximum to 16384 in memory before main() runs (4096 was too small for 5120x1440). The 10 instruction bytes
 // are verified first; GVRIOSHIM_NO_MODE_PATCH=1 skips it. NASCAR_GVR.exe is not modified.
 static const DWORD kModeMaxInsnRva = 0x00107C5A;   // 0x507C5A - base 0x400000
 static const BYTE  kModeMaxInsn[10] = { 0xC7, 0x82, 0x64, 0x1F, 0x00, 0x00, 0x40, 0x06, 0x00, 0x00 };
-static const DWORD kModeMaxNew      = 4096;
+static const DWORD kModeMaxNew      = 16384;
 
 static void patch_mode_limit(void)
 {
@@ -243,11 +303,17 @@ static void patch_mode_limit(void)
     }
     HMODULE host = GetModuleHandleA(NULL);
     if (!host) return;
-    BYTE* insn = (BYTE*)host + kModeMaxInsnRva;
+    BYTE* insn = (BYTE*)host + kModeMaxInsnRva;   // v1.1 fast path
     __try {
         if (memcmp(insn, kModeMaxInsn, sizeof(kModeMaxInsn)) != 0) {
-            logf("mode-limit patch: bytes differ at %p - not this build / not the race, NOT patching", insn);
-            return;
+            // Not v1.1 at the known address: the same 10-byte instruction exists in 2.0.2,
+            // just relocated, so find it by signature. Absent -> not the race.
+            insn = find_pattern(kModeMaxInsn, NULL, sizeof(kModeMaxInsn));
+            if (!insn) {
+                logf("mode-limit patch: instruction not found - not this build / not the race, NOT patching");
+                return;
+            }
+            logf("mode-limit patch: located by signature at %p (build != v1.1)", insn);
         }
     } __except (EXCEPTION_EXECUTE_HANDLER) {
         logf("mode-limit patch: %p not readable in this process - skipped", insn);
@@ -321,6 +387,125 @@ static __declspec(naked) void horn_stub(void)
     }
 }
 
+// 2.0.2 shell: the cabinets ran US Windows, and the shell's .NET 1.1 code parses the
+// database's US-format dates with the PC's own format: on a day/month Windows (nl-BE, de-DE,
+// fr-FR, en-GB, ...) SafeConvert.ParseDate('12/31/1999 12:00:00 AM') throws a FormatException
+// inside NASCAR_INITIALIZE_SHELL, the script engine's stack is corrupted (AMPlayer+0x28BE89)
+// and the shell crashes ~30 s after start (reproduced under nl-BE; fine under en-US / en-BE,
+// which .NET 1.1 does not know and treats as US). So this process gets the US locale: the
+// locale queries the CLR makes (it imports exactly these) answer 0x0409. The Windows setting
+// itself is untouched. GVRIOSHIM_NO_LOCALE_FIX=1 skips it (developer override).
+static int WINAPI us_GetLocaleInfoW(LCID lcid, LCTYPE type, LPWSTR buf, int cch)
+{
+    WCHAR name[LOCALE_NAME_MAX_LENGTH] = L"en-US";
+    if (lcid == LOCALE_USER_DEFAULT || lcid == LOCALE_SYSTEM_DEFAULT || lcid == 0x0409 || lcid == 0)
+        type |= LOCALE_NOUSEROVERRIDE;
+    else if (!LCIDToLocaleName(lcid, name, LOCALE_NAME_MAX_LENGTH, 0))
+        lstrcpyW(name, L"en-US");
+    return GetLocaleInfoEx(name, type, buf, cch);
+}
+
+static int WINAPI us_GetLocaleInfoA(LCID lcid, LCTYPE type, LPSTR buf, int cch)
+{
+    WCHAR w[256];
+    int n = us_GetLocaleInfoW(lcid, type, w, 256);
+    if (n <= 0) return n;
+    if (type & LOCALE_RETURN_NUMBER) {                 // a DWORD, not text
+        if (cch == 0) return sizeof(DWORD);
+        if (cch < (int)sizeof(DWORD)) { SetLastError(ERROR_INSUFFICIENT_BUFFER); return 0; }
+        memcpy(buf, w, sizeof(DWORD));
+        return sizeof(DWORD);
+    }
+    return WideCharToMultiByte(CP_ACP, 0, w, n, cch ? buf : NULL, cch, NULL, NULL);
+}
+
+static void patch_us_locale(void)
+{
+    if (GetEnvironmentVariableA("GVRIOSHIM_NO_LOCALE_FIX", NULL, 0) > 0) return;
+    const BYTE* host = (const BYTE*)GetModuleHandleA(NULL);
+    const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(host + ((const IMAGE_DOS_HEADER*)host)->e_lfanew);
+    DWORD stamp = nt->FileHeader.TimeDateStamp;                  // 2.0.2 / 1.1 AMPlayer.exe (both affected,
+    if (stamp != 0x47C34847 && stamp != 0x46AFA277) return;      //   1.1 floods and never shows the attract)
+    LCID before = GetUserDefaultLCID();
+    static const char* const kFns[] = { "GetUserDefaultLCID", "GetThreadLocale", "GetSystemDefaultLCID",
+                                        "GetUserDefaultLangID", "GetSystemDefaultLangID" };
+    static const BYTE kStub[6] = { 0xB8, 0x09, 0x04, 0x00, 0x00, 0xC3 };   // mov eax, 0x409 ; ret
+    HMODULE mods[2] = { GetModuleHandleA("kernel32.dll"), GetModuleHandleA("kernelbase.dll") };
+    BYTE* done[16]; int nd = 0, patched = 0;
+    for (int m = 0; m < 2; ++m) {
+        if (!mods[m]) continue;
+        for (int i = 0; i < 5; ++i) {
+            BYTE* f = (BYTE*)GetProcAddress(mods[m], kFns[i]);
+            bool seen = false;
+            for (int j = 0; j < nd; ++j) if (done[j] == f) seen = true;
+            if (!f || seen) continue;
+            DWORD old = 0;
+            if (!VirtualProtect(f, sizeof kStub, PAGE_EXECUTE_READWRITE, &old)) continue;
+            memcpy(f, kStub, sizeof kStub);
+            VirtualProtect(f, sizeof kStub, old, &old);
+            FlushInstructionCache(GetCurrentProcess(), f, sizeof kStub);
+            done[nd++] = f; ++patched;
+        }
+    }
+    // The LCID alone is not enough (tested): the CLR then reads the culture's formats through
+    // GetLocaleInfo for the current user, i.e. the user's own overrides (d/MM/yyyy). So
+    // GetLocaleInfoW/A are answered by GetLocaleInfoEx: the user / system / en-US locale as
+    // plain en-US without user overrides, any other locale by its own name.
+    int formats = 0;
+    for (int m = 0; m < 2; ++m) {
+        if (!mods[m]) continue;
+        const char* names[2] = { "GetLocaleInfoW", "GetLocaleInfoA" };
+        void* hooks[2] = { (void*)us_GetLocaleInfoW, (void*)us_GetLocaleInfoA };
+        for (int i = 0; i < 2; ++i) {
+            BYTE* f = (BYTE*)GetProcAddress(mods[m], names[i]);
+            bool seen = false;
+            for (int j = 0; j < nd; ++j) if (done[j] == f) seen = true;
+            if (!f || seen || nd >= 16) continue;
+            BYTE jmp[5] = { 0xE9 };
+            *(DWORD*)(jmp + 1) = (DWORD)(ULONG_PTR)hooks[i] - ((DWORD)(ULONG_PTR)f + 5);
+            DWORD old = 0;
+            if (!VirtualProtect(f, sizeof jmp, PAGE_EXECUTE_READWRITE, &old)) continue;
+            memcpy(f, jmp, sizeof jmp);
+            VirtualProtect(f, sizeof jmp, old, &old);
+            FlushInstructionCache(GetCurrentProcess(), f, sizeof jmp);
+            done[nd++] = f; ++formats;
+        }
+    }
+    logf("locale: shell runs as en-US (Windows user locale 0x%04lX; %d id + %d format entry points)",
+         (unsigned long)before, patched, formats);
+}
+
+// The cabinet software restarts Windows (nightly maintenance restart, operator "restart"
+// screens). On a player's PC the game must never do that: the restart / shutdown entry points
+// refuse inside the game's processes (BOOL ones return FALSE, InitiateShutdown returns
+// ERROR_ACCESS_DENIED). The shell's own shutdown.exe launch is blocked in GvrIOPad.cpp.
+static void block_pc_restart(void)
+{
+    struct Fn { const char* dll; const char* name; BYTE stub[8]; int len; };
+    static const Fn kFns[] = {
+        { "user32.dll",   "ExitWindowsEx",               { 0x31,0xC0,0xC2,0x08,0x00 }, 5 },             // xor eax,eax; ret 8
+        { "advapi32.dll", "InitiateSystemShutdownA",     { 0x31,0xC0,0xC2,0x14,0x00 }, 5 },             // ret 0x14
+        { "advapi32.dll", "InitiateSystemShutdownW",     { 0x31,0xC0,0xC2,0x14,0x00 }, 5 },
+        { "advapi32.dll", "InitiateSystemShutdownExA",   { 0x31,0xC0,0xC2,0x18,0x00 }, 5 },             // ret 0x18
+        { "advapi32.dll", "InitiateSystemShutdownExW",   { 0x31,0xC0,0xC2,0x18,0x00 }, 5 },
+        { "advapi32.dll", "InitiateShutdownA",           { 0xB8,0x05,0x00,0x00,0x00,0xC2,0x14,0x00 }, 8 }, // mov eax,5; ret 0x14
+        { "advapi32.dll", "InitiateShutdownW",           { 0xB8,0x05,0x00,0x00,0x00,0xC2,0x14,0x00 }, 8 },
+    };
+    int n = 0;
+    for (int i = 0; i < (int)(sizeof kFns / sizeof kFns[0]); ++i) {
+        HMODULE m = GetModuleHandleA(kFns[i].dll);    // this DLL links both, so they are mapped (no LoadLibrary in DllMain)
+        BYTE* f = m ? (BYTE*)GetProcAddress(m, kFns[i].name) : NULL;
+        if (!f) continue;
+        DWORD old = 0;
+        if (!VirtualProtect(f, kFns[i].len, PAGE_EXECUTE_READWRITE, &old)) continue;
+        memcpy(f, kFns[i].stub, kFns[i].len);
+        VirtualProtect(f, kFns[i].len, old, &old);
+        FlushInstructionCache(GetCurrentProcess(), f, kFns[i].len);
+        ++n;
+    }
+    logf("restart guard: %d Windows restart/shutdown entry points refuse in this process", n);
+}
+
 static void patch_horn_stop(void)
 {
     if (GetEnvironmentVariableA("GVRIOSHIM_NO_HORN_PATCH", NULL, 0) > 0) return;
@@ -340,6 +525,111 @@ static void patch_horn_stop(void)
     VirtualProtect(site, sizeof patch, old, &old);
     FlushInstructionCache(GetCurrentProcess(), site, sizeof patch);
     logf("horn patch: NOS horn now stops on release (%p)", site);
+}
+
+// 2.0.2 race (NASCAR_GVR.exe, link stamp 0x4C7EC23F): its music manager (0x4AACD0) turns a
+// Music press into a volume step (Loud -> Soft -> Off, [this+0xB0]); 1.1's Music button is
+// "next song". nascar_settings.ini [Race] MusicButton = next (default) makes 2.0.2 do the
+// same: the press keeps its 20-frame cool-down but jumps into the manager's own "song ended"
+// path (0x4AADAA: playlist index + 1, wrap, start that song), instead of the volume step.
+// MusicButton = volume keeps the arcade behaviour. Applied in memory; the exe is untouched.
+static const DWORD kMusicSite = 0x004AAD16, kMusicNext = 0x004AADAA;
+static const BYTE  kMusicSiteBytes[] = { 0x8B,0x96,0xB0,0x00,0x00,0x00,0x42,0x8B,0xC2,0x83,0xF8,0x03,
+                                         0x88,0x9E,0xB8,0x00,0x00,0x00,0xC7,0x86,0xAC,0x00,0x00,0x00 };
+static const BYTE  kMusicNextBytes[] = { 0x8B,0x86,0x8C,0x00,0x00,0x00,0x3B,0xC3,0x7E,0x2E };
+
+static void patch_music_button(void)
+{
+    char ini[MAX_PATH], v[32] = "next";
+    if (shim_settings_path(ini, sizeof ini)) GetPrivateProfileStringA("Race", "MusicButton", "next", v, sizeof v, ini);
+    char* c = strpbrk(v, " \t;#"); if (c) *c = 0;
+    if (_stricmp(v, "volume") == 0) { logf("music button: volume (as on the cabinet)"); return; }
+    BYTE* site = (BYTE*)(ULONG_PTR)kMusicSite;
+    if ((BYTE*)GetModuleHandleA(NULL) != (BYTE*)0x00400000) return;
+    __try {
+        if (memcmp(site, kMusicSiteBytes, sizeof kMusicSiteBytes) != 0 ||
+            memcmp((BYTE*)(ULONG_PTR)kMusicNext, kMusicNextBytes, sizeof kMusicNextBytes) != 0)
+            return;                                        // not the 2.0.2 race (1.1 already skips)
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+    BYTE patch[21] = {
+        0x88,0x9E,0xB8,0x00,0x00,0x00,                     // mov byte [esi+0xB8], bl   (press handled)
+        0xC7,0x86,0xAC,0x00,0x00,0x00,0x14,0x00,0x00,0x00, // mov dword [esi+0xAC], 20  (cool-down)
+        0xE9,0,0,0,0 };                                    // jmp 0x4AADAA              (next song)
+    *(DWORD*)(patch + 17) = kMusicNext - (kMusicSite + sizeof patch);
+    DWORD old = 0;
+    if (!VirtualProtect(site, sizeof patch, PAGE_EXECUTE_READWRITE, &old)) return;
+    memcpy(site, patch, sizeof patch);
+    VirtualProtect(site, sizeof patch, old, &old);
+    FlushInstructionCache(GetCurrentProcess(), site, sizeof patch);
+    logf("music button: next song (%p)", site);
+}
+
+// 2.0.2 race playlist: the song table at 0x76B674 holds 2 entries {name, file size, flags, -1}
+// (Le Mans, Meathook); the playlist builder (0x4AA780) walks it up to 0x76B694 and keeps a song
+// only if Audio\Music\<name> exists with exactly that size, and "start song" (0x4AAA17) caps the
+// index at 2. The disc also ships Tiger Fists (unused) and 1.1 had Chow Time, so with
+// nascar_settings.ini [Race] MusicPlaylist = all (default) the table is replaced by a 4-entry one
+// here, with each size read from the file on disk (a missing file is simply skipped by the
+// game's own check). MusicPlaylist = original keeps the 2 songs. In memory only.
+struct SongEntry { const char* name; DWORD size; BYTE flags[4]; DWORD tail; };
+static SongEntry g_songs[4];
+static const char* const kSongNames[4] = { "LE MANS.DJS", "MEATHOOK.DJS", "TIGER FISTS.DJS", "CHOW_TIME.DJS" };
+
+static void patch_music_playlist(void)
+{
+    char ini[MAX_PATH], v[32] = "all";
+    if (shim_settings_path(ini, sizeof ini)) GetPrivateProfileStringA("Race", "MusicPlaylist", "all", v, sizeof v, ini);
+    char* c = strpbrk(v, " \t;#"); if (c) *c = 0;
+    if (_stricmp(v, "original") == 0) { logf("music playlist: original 2 songs"); return; }
+    if ((BYTE*)GetModuleHandleA(NULL) != (BYTE*)0x00400000) return;
+    // {address of the instruction, its bytes before the immediate, the immediate}
+    struct Site { DWORD at; BYTE op[2]; int oplen; DWORD imm; };
+    static const Site kSites[] = {
+        { 0x004AA788, { 0xBD },       1, 0x0076B674 },  // mov ebp, table
+        { 0x004AA7A2, { 0x81, 0xFD }, 2, 0x0076B674 },  // cmp ebp, table
+        { 0x004AA7AA, { 0x81, 0xFD }, 2, 0x0076B694 },  // cmp ebp, table end
+        { 0x004AA852, { 0x3D },       1, 0x0076B694 },  // cmp eax, table end
+        { 0x004AAA1F, { 0x05 },       1, 0x0076B674 },  // add eax, table
+    };
+    static const BYTE kCap[] = { 0x83, 0xF8, 0x02 };    // 0x4AAA17 cmp eax, 2
+    __try {
+        for (int i = 0; i < 5; ++i) {
+            const BYTE* p = (const BYTE*)(ULONG_PTR)kSites[i].at;
+            if (memcmp(p, kSites[i].op, kSites[i].oplen) != 0 || *(const DWORD*)(p + kSites[i].oplen) != kSites[i].imm)
+                return;                                    // not the 2.0.2 race
+        }
+        if (memcmp((const void*)(ULONG_PTR)0x004AAA17, kCap, sizeof kCap) != 0) return;
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+
+    char dir[MAX_PATH];
+    GetModuleFileNameA(NULL, dir, MAX_PATH);
+    char* slash = strrchr(dir, '\\'); if (slash) slash[1] = 0;
+    // Only songs that exist go in: the game numbers its playlist 0..count-1 over the songs that
+    // passed its check and then uses those numbers as table positions, so a gap would shift them.
+    int found = 0;
+    for (int i = 0; i < 4; ++i) {
+        char path[MAX_PATH];
+        _snprintf(path, sizeof path, "%sAudio\\Music\\%s", dir, kSongNames[i]); path[sizeof path - 1] = 0;
+        WIN32_FILE_ATTRIBUTE_DATA fa;
+        if (!GetFileAttributesExA(path, GetFileExInfoStandard, &fa)) continue;
+        g_songs[found].name = kSongNames[i];
+        g_songs[found].size = fa.nFileSizeLow;
+        g_songs[found].tail = 0xFFFFFFFF;
+        ++found;
+    }
+    if (found < 2) { logf("music playlist: only %d song file(s) found - keeping the original table", found); return; }
+    DWORD table = (DWORD)(ULONG_PTR)g_songs, end = table + found * sizeof(SongEntry);
+    for (int i = 0; i < 5; ++i) {
+        BYTE* imm = (BYTE*)(ULONG_PTR)kSites[i].at + kSites[i].oplen;
+        DWORD val = kSites[i].imm == 0x0076B674 ? table : end, old = 0;
+        if (!VirtualProtect(imm, 4, PAGE_EXECUTE_READWRITE, &old)) return;
+        *(DWORD*)imm = val;
+        VirtualProtect(imm, 4, old, &old);
+    }
+    BYTE* cap = (BYTE*)(ULONG_PTR)0x004AAA19; DWORD old = 0;
+    if (VirtualProtect(cap, 1, PAGE_EXECUTE_READWRITE, &old)) { *cap = (BYTE)found; VirtualProtect(cap, 1, old, &old); }
+    FlushInstructionCache(GetCurrentProcess(), (void*)(ULONG_PTR)0x004AA780, 0x2A0);
+    logf("music playlist: %d of 4 songs found (Le Mans, Meathook, Tiger Fists, Chow Time)", found);
 }
 
 // The IO-board / pedal / steering answers below are for the SHELL (AMPlayer.exe) only;
@@ -364,6 +654,26 @@ static DWORD WINAPI WatchdogThread(LPVOID)
     volatile BYTE* flag = (BYTE*)oem + kHeartbeatRva;
     logf("watching heartbeat at %p (GvrIO_oem base %p + 0x%X)", flag, oem, kHeartbeatRva);
 
+    // One-shot: report which CLR the managed shell actually bound. 2.0.2's PLUSDE is a 1.1
+    // mixed-mode assembly; under CLR 2.0/4.0 its native C++ exception interop access-violates.
+    // mscorwks.dll = CLR 1.1 or 2.0 (path tells which); clr.dll = CLR 4. Logged once when seen.
+    if (g_logging) {
+        bool reported = false;
+        for (int i = 0; i < 400 && !reported; i++) {
+            const char* names[3] = { "mscorwks.dll", "clr.dll", "coreclr.dll" };
+            for (int n = 0; n < 3; n++) {
+                HMODULE clr = GetModuleHandleA(names[n]);
+                if (clr) {
+                    char p[MAX_PATH] = "?"; GetModuleFileNameA(clr, p, MAX_PATH);
+                    logf("CLR loaded: %s  (%s)", names[n], p);
+                    reported = true; break;
+                }
+            }
+            if (!reported) Sleep(25);
+        }
+        if (!reported) logf("CLR: no managed runtime seen after 10s (native-only host?)");
+    }
+
     int zeroMs = 0;
     unsigned supplied = 0;
     for (;;) {
@@ -378,6 +688,73 @@ static DWORD WINAPI WatchdogThread(LPVOID)
         }
         else zeroMs = 0;                   // a real worker is alive; stay out of it
         Sleep(1);
+    }
+}
+
+// ------------------------------------------------- shell selection (2.0.2 menus)
+// 2.0.2's login / name-entry / cabinet-number screens read Gvr.SelectionX (msg 0x0F, device 2;
+// SelectionY = 0x10) after setting Gvr.SelectionRangeX (msg 0x13): GvrIO turns the cabinet
+// wheel into a slot 0..range-1 and raises "onSelectionChanged" through AMPlayer's event callback
+// (event 0x0B, name at +0xC; 0x16 / 0x15 = "X / Y slot changed", pointer at +0xC). With no
+// cabinet wheel its idle reading wanders, so the slot changed by itself about once a second and
+// the screens scrolled with nobody touching them. When no real analog device answers, the shim
+// owns the slot instead: GvrIO's own selection events are dropped, SelectionX/Y are answered
+// from here, and keyboard Left/Right (D/G), the pad (stick, D-pad) or a PC wheel move it.
+typedef void* (__cdecl *AmEventFn)(void*);
+static AmEventFn     g_amCb = 0;               // AMPlayer's event callback (from Initialize)
+static volatile LONG g_selOwn = -1;            // -1 not decided yet, 1 = the shim owns the slot
+static volatile LONG g_selX = 0, g_selY = 0, g_rangeX = 1, g_rangeY = 1;
+
+static void* __cdecl sel_filter_cb(void* m)
+{
+    if (g_selOwn == 1 && m) {
+        int* f = (int*)m;
+        if (f[1] == 0x15 || f[1] == 0x16) return 0;
+        if (f[1] == 0x0B) {
+            __try {
+                const char* n = (const char*)(INT_PTR)f[3];
+                if (n && strcmp(n, "onSelectionChanged") == 0) return 0;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER) {}
+        }
+    }
+    return g_amCb ? g_amCb(m) : 0;
+}
+
+static void sel_fire(void)
+{
+    int e[8] = { 0 };                          // the OEM sends these two, in this order
+    e[1] = 0x16; e[3] = (int)(INT_PTR)&g_selX; g_amCb(e);
+    e[1] = 0x0B; e[3] = (int)(INT_PTR)"onSelectionChanged"; g_amCb(e);
+}
+
+static DWORD WINAPI sel_thread(LPVOID)
+{
+    int lastDir = 0;
+    DWORD nextStep = 0;
+    for (;;) {
+        Sleep(30);
+        if (g_selOwn != 1 || !g_amCb) continue;
+        int range = g_rangeX < 1 ? 1 : (int)g_rangeX;
+        int v = 0, x = (int)g_selX;
+        if (!pad_axis(0, &v) && pad_process_has_focus()) {
+            if ((GetAsyncKeyState(VK_LEFT) | GetAsyncKeyState('D')) & 0x8000)  v = -60;
+            if ((GetAsyncKeyState(VK_RIGHT) | GetAsyncKeyState('G')) & 0x8000) v = 60;
+        }
+        if (wheel_steers()) {
+            x = (v + 127) * range / 255;       // a wheel picks by position, like the cabinet's
+        } else {
+            int dir = v < -30 ? -1 : v > 30 ? 1 : 0;
+            DWORD now = GetTickCount();
+            if (dir && (dir != lastDir || (int)(now - nextStep) >= 0)) {
+                x += dir;
+                nextStep = now + (dir != lastDir ? 400 : 150);   // first step, then auto-repeat
+            }
+            lastDir = dir;
+        }
+        if (x < 0) x = 0;
+        if (x > range - 1) x = range - 1;
+        if (x != g_selX) { InterlockedExchange(&g_selX, x); sel_fire(); }
     }
 }
 
@@ -414,6 +791,11 @@ bool cGvrIO::Initialize(GVR_DEVICE_TYPES devType, struct HWND__* hwnd, MessageSe
         // The OEM Initialize creates GvrIO's DirectInput keyboard; hook it first so
         // controller buttons can act as cabinet keys (GvrIOPad.cpp).
         pad_hook_gvrio(oem);
+        if (g_isShell && cb && !g_amCb) {      // shell selection: see sel_filter_cb
+            g_amCb = (AmEventFn)cb;
+            cb = (MessageSendFn)sel_filter_cb;
+            CloseHandle(CreateThread(NULL, 0, sel_thread, NULL, 0, NULL));
+        }
         FARPROC raw = GetProcAddress(oem, kOemInitialize);
         if (!raw) logf("OEM Initialize export not found");
         else {
@@ -511,6 +893,22 @@ static bool real_pedals(OemSendFn oemFn, Gvr::Zeus::GvrIO::sMessage* msg)
     return lo && hi && mn >= 0 && mx - mn >= 40;
 }
 
+// Messages 0x47 / 0x5D / 0x5F use the OEM's IO-board object (global at RVA 0xE210 in the
+// shipped GvrIO build, link stamp 0x480FA1CF), which only a real board creates (msgs 9 / 0x0A).
+// Without one the OEM dereferences NULL - the 2.0.2 attract's msg 0x5F faulted at
+// GvrIO_oem+0x2249 with the OEM's message lock still held, and the shell went down with it.
+// Answer "no data" (NULL, as the OEM does before it is initialised) instead of forwarding.
+static bool oem_board_missing(int id)
+{
+    if (id != 0x47 && id != 0x5D && id != 0x5F) return false;
+    HMODULE oem = oem_module();
+    if (!oem) return false;
+    const BYTE* base = (const BYTE*)oem;
+    const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(base + ((const IMAGE_DOS_HEADER*)base)->e_lfanew);
+    if (nt->FileHeader.TimeDateStamp != 0x480FA1CF) return false;   // other build: forward as before
+    return *(void* const*)(base + 0xE210) == NULL;
+}
+
 void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
 {
     typedef void* (__cdecl *Fn)(sMessage*);
@@ -520,8 +918,37 @@ void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
         HMODULE oem = oem_module();
         if (oem) oemFn = (Fn)GetProcAddress(oem, "?GvrIOMessageSend@GvrIO@Zeus@Gvr@@YAPAXPAUsMessage@123@@Z");
     }
-    void* r = oemFn ? oemFn(msg) : 0;
     int id = msg ? ((int*)msg)[1] : -1;
+    if (oem_board_missing(id)) {
+        static LONG warned[3];
+        LONG* w = &warned[id == 0x47 ? 0 : id == 0x5D ? 1 : 2];
+        if (InterlockedExchange(w, 1) == 0) logf("msg 0x%X needs the IO board object (none) - answering NULL", id);
+        return 0;
+    }
+    if (g_isShell && g_amCb && id >= 0x0F && id <= 0x14 && oemFn) {
+        if (g_selOwn < 0) {
+            int t[8] = { 1, 5, 0 };
+            LONG own = (wheel_present() || !real_pedals(oemFn, (sMessage*)t)) ? 1 : 0;
+            InterlockedExchange(&g_selOwn, own);
+            logf("menu selection: %s", own ? "keyboard / pad / PC wheel (no cabinet wheel)" : "cabinet wheel (OEM)");
+        }
+        if (g_selOwn == 1) {
+            int* f = (int*)msg;
+            if (id == 0x0F || id == 0x10) {    // SelectionX / SelectionY: the value via +0x10
+                volatile LONG* p = id == 0x0F ? &g_selX : &g_selY;
+                f[4] = (int)(INT_PTR)p;
+                return (void*)p;
+            }
+            void* rs = oemFn(msg);             // the setters still reach the OEM
+            LONG v = f[2];
+            if (id == 0x11) InterlockedExchange(&g_selX, v < 0 ? 0 : v);
+            if (id == 0x12) InterlockedExchange(&g_selY, v < 0 ? 0 : v);
+            if (id == 0x13) { InterlockedExchange(&g_rangeX, v < 1 ? 1 : v); if (g_selX >= g_rangeX) InterlockedExchange(&g_selX, g_rangeX - 1); }
+            if (id == 0x14) InterlockedExchange(&g_rangeY, v < 1 ? 1 : v);
+            return rs;
+        }
+    }
+    void* r = oemFn ? oemFn(msg) : 0;
     if (!g_isShell) {
         // The race: every message passes through untouched, except that a controller
         // drives the live axes (msg 5, device 1) when no real wheel and pedals are fitted.
@@ -530,12 +957,52 @@ void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
         if (id == 5 && ((int*)msg)[0] == 1 && oemFn) {
             static int s_raceAxis[3];
             int axis = ((int*)msg)[2], v = 0;
-            if (axis >= 0 && axis < 3 && pad_axis(axis, &v) && (!r || wheel_present() || !real_pedals(oemFn, msg))) {
+            // With no real wheel and pedals the answer is the controller, or 0 (= the race's
+            // own keyboard input). 1.1's OEM answered 0 there anyway; 2.0.2 also loads the
+            // force-feedback Steering.dll, whose idle value steered the car hard left.
+            if (axis >= 0 && axis < 3 && (!r || wheel_present() || !real_pedals(oemFn, msg))) {
+                bool pad = pad_axis(axis, &v);
+                static int s_traced[3];
+                if (s_traced[axis]++ < 3)
+                    logf("race axis %d: OEM %d -> %s %d", axis, r ? *(int*)r : -1, pad ? "controller" : "keyboard", v);
                 s_raceAxis[axis] = v;
                 r = &s_raceAxis[axis];
             }
         }
         return r;
+    }
+    // PC pedals are calibrated like the cabinet's I/O board (GvrIOWheel.cpp): raw position
+    // (msg 6 = Gvr.AxisRawY/Z), min / max (0x39 / 0x3A) and reset (0x53 = Gvr.ResetCalibration)
+    // come from the shim, so the shell's own "Calibrate the accelerator and brake" screen (shown
+    // while max - min < 40) and the operator Control Test (Start + Music) calibrate them.
+    if (msg && ((int*)msg)[0] == 1 && (id == 6 || id == 0x39 || id == 0x3A || id == 0x53) &&
+        GetEnvironmentVariableA("GVRIOSHIM_NO_IOBOARD", NULL, 0) == 0) {
+        wheel_discover_first();
+        if (id == 0x53) {
+            if (wheel_cal_reset()) logf("pedal calibration reset by the shell (msg 0x53)");
+            return r;
+        }
+        // The calibration screen reads only these, so read the controller here (at most every
+        // 10 ms) - nothing else polls it in the shell at that point and the raw value stood still.
+        static DWORD s_polled = 0;
+        DWORD now = GetTickCount();
+        if (now - s_polled >= 10) { s_polled = now; int v; pad_axis(1, &v); }
+        static int s_cal[3][3];                // [raw / min / max][axis]
+        int axis = ((int*)msg)[2], raw, mn, mx;
+        // Steering raw (Gvr.AxisRawX): the PC wheel's steering, -127..127 like the race's - the
+        // operator Control Test draws its wheel from it (rotation = raw x -1.1 degrees) and ticks
+        // left / right past +/-30. The cabinet's power-on motor self-test is not involved.
+        if (id == 6 && axis == 0 && wheel_steers()) {
+            int v = 0;
+            pad_axis(0, &v);
+            s_cal[0][0] = v;
+            return &s_cal[0][0];
+        }
+        if (axis >= 1 && axis <= 2 && wheel_cal_axis(axis, &raw, &mn, &mx)) {
+            int k = id == 6 ? 0 : id == 0x39 ? 1 : 2;
+            s_cal[k][axis] = k == 0 ? raw : k == 1 ? mn : mx;
+            return &s_cal[k][axis];
+        }
     }
     if (id == 0x2F || id == 0x30) {
         int got = r ? *(int*)r : -1;
@@ -586,6 +1053,10 @@ void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
         static bool s_logged[3];
         int axis = ((int*)msg)[2];
         if (axis >= 0 && axis < 3 && oemFn) {
+            static int s_traced[3];
+            if (s_traced[axis]++ < 3)
+                logf("shell axis %d: OEM %d, wheel=%d, real pedals=%d", axis, r ? *(int*)r : -1,
+                     (int)wheel_present(), (int)real_pedals(oemFn, msg));
             // A PC wheel (GvrIOWheel.cpp) always wins: with one attached, OEM Steering.dll reports a
             // calibrated range but only reads the wheel's X axis - its gas / brake would stay 0.
             if (!r || wheel_present() || !real_pedals(oemFn, msg)) {
@@ -594,6 +1065,17 @@ void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
                 if (axis == 0 && v == 0 && pad_process_has_focus()) {
                     if ((GetAsyncKeyState(VK_LEFT) | GetAsyncKeyState('D')) & 0x8000)  v = -60;
                     if ((GetAsyncKeyState(VK_RIGHT) | GetAsyncKeyState('G')) & 0x8000) v = 60;
+                }
+                // Keys and D-pad give a fixed small turn (60), which car / track select steps
+                // through every 0.8 s; past 100 it steps every 0.1 s. Held for 0.7 s, report a
+                // full turn - a tap still moves one step, a hold scrolls like a wheel turned far.
+                if (axis == 0) {
+                    static DWORD s_holdSince = 0;
+                    if (v == 60 || v == -60) {
+                        DWORD now = GetTickCount();
+                        if (!s_holdSince) s_holdSince = now;
+                        else if (now - s_holdSince > 700) v = v > 0 ? 110 : -110;
+                    } else s_holdSince = 0;
                 }
                 if (!s_logged[axis]) {
                     s_logged[axis] = true;
@@ -665,6 +1147,57 @@ static LONG WINAPI crash_filter(EXCEPTION_POINTERS* ep)
     return g_prevFilter ? g_prevFilter(ep) : EXCEPTION_CONTINUE_SEARCH;
 }
 
+// First-chance Vectored Exception Handler. The managed shell hosts the CLR, which installs its
+// own top-level filter and routes fatal faults straight to WER -- so crash_filter (a UEF) never
+// sees them and the log shows only "exited with code 0xC0000005" from the launcher. A VEH runs
+// FIRST, before any frame-based or top-level handler, so it captures the faulting module+offset
+// even when the CLR/WER would otherwise swallow the UEF. We only log and always CONTINUE_SEARCH,
+// so real handling (including the game's own) is unchanged. Gated to a handful of fatal codes so
+// the CLR's and C++ runtime's ordinary first-chance exceptions don't flood the trace; capped so a
+// tight fault loop can't fill the disk. The terminating fault is the LAST line written.
+static volatile LONG g_inVeh = 0;
+static volatile LONG g_vehCount = 0;
+static LONG WINAPI veh_handler(EXCEPTION_POINTERS* ep)
+{
+    EXCEPTION_RECORD* er = ep ? ep->ExceptionRecord : NULL;
+    unsigned long code = er ? er->ExceptionCode : 0;
+    // Only the codes that mean "something is already broken". Skip managed (0xE0434352) and
+    // C++ (0xE06D7363) throws and everything else -- those are normal control flow here.
+    if (code != EXCEPTION_ACCESS_VIOLATION &&      // 0xC0000005
+        code != 0xC0000374UL &&                    // STATUS_HEAP_CORRUPTION
+        code != 0xC00000FDUL &&                    // STATUS_STACK_OVERFLOW
+        code != 0xC0000409UL &&                    // STATUS_STACK_BUFFER_OVERRUN / fail-fast
+        code != EXCEPTION_ILLEGAL_INSTRUCTION &&   // 0xC000001D
+        code != EXCEPTION_PRIV_INSTRUCTION)        // 0xC0000096
+        return EXCEPTION_CONTINUE_SEARCH;
+    if (InterlockedExchange(&g_inVeh, 1) != 0) return EXCEPTION_CONTINUE_SEARCH;  // reentrancy
+    if (InterlockedIncrement(&g_vehCount) <= 60) {
+        __try {
+            void* addr = er ? er->ExceptionAddress : NULL;
+            char mod[MAX_PATH] = "?"; unsigned long off = 0; HMODULE hm = NULL;
+            if (addr && GetModuleHandleExA(
+                    GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                    (LPCSTR)addr, &hm) && hm) {
+                GetModuleFileNameA(hm, mod, MAX_PATH);
+                off = (unsigned long)((DWORD_PTR)addr - (DWORD_PTR)hm);
+            }
+            const char* b = strrchr(mod, '\\'); b = b ? b + 1 : mod;
+            logf("[VEH first-chance] code=0x%08lX addr=%p  %s+0x%lX", code, addr, b, off);
+            if (er && code == EXCEPTION_ACCESS_VIOLATION && er->NumberParameters >= 2)
+                logf("    access violation %s address %p",
+                     er->ExceptionInformation[0] ? "writing" : "reading",
+                     (void*)er->ExceptionInformation[1]);
+            CONTEXT* c = ep ? ep->ContextRecord : NULL;
+            if (c) logf("    EIP=%08lX ESP=%08lX EBP=%08lX EAX=%08lX EBX=%08lX ECX=%08lX EDX=%08lX",
+                        (unsigned long)c->Eip, (unsigned long)c->Esp, (unsigned long)c->Ebp,
+                        (unsigned long)c->Eax, (unsigned long)c->Ebx, (unsigned long)c->Ecx,
+                        (unsigned long)c->Edx);
+        } __except (EXCEPTION_EXECUTE_HANDLER) { }
+    }
+    InterlockedExchange(&g_inVeh, 0);
+    return EXCEPTION_CONTINUE_SEARCH;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH) {
@@ -703,6 +1236,9 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
             }
             logf("--- GvrIO shim attached (proc=%s pid=%lu) ---", proc, GetCurrentProcessId());
             g_prevFilter = SetUnhandledExceptionFilter(crash_filter);
+            // A VEH too: the managed shell's CLR shadows the UEF and sends fatal faults to WER,
+            // so only a first-chance vectored handler reliably captures the module+offset there.
+            AddVectoredExceptionHandler(1, veh_handler);
         }
         // Before anything in this process reads the registry: the race imports this DLL,
         // and NascarLaunch loads it into the front end before AMPlayer's first instruction.
@@ -711,7 +1247,11 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
         // video manager is constructed with the raised mode limit.
         patch_dongle_gate();
         patch_mode_limit();
+        if (g_isShell) patch_us_locale();      // before the CLR starts and reads the locale
+        block_pc_restart();                    // both processes: the game never restarts the PC
         if (!g_isShell) patch_horn_stop();
+        if (!g_isShell) patch_music_button();
+        if (!g_isShell) patch_music_playlist();
         HANDLE h = CreateThread(NULL, 0, WatchdogThread, NULL, 0, NULL);
         if (h) CloseHandle(h);
     }

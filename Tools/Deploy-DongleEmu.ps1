@@ -21,10 +21,11 @@
 $ErrorActionPreference = "Stop"
 $bin   = "D:\Games\NASCAR\Shell\bin"
 $game  = "D:\Games\NASCAR\Game"
-$built = "D:\NFSU_GVR\NASCAR\src\GvrDongleEmu\build\GVRSCR28.dll"
+$repo  = Split-Path -Parent (Split-Path -Parent $MyInvocation.MyCommand.Path)
+$built = Join-Path $repo "src\GvrDongleEmu\build\GVRSCR28.dll"
 
 Write-Host "[1/4] building GvrDongleEmu ..."
-cmd /c "`"D:\NFSU_GVR\NASCAR\src\GvrDongleEmu\build.cmd`"" | Select-Object -Last 2
+cmd /c "`"$(Join-Path $repo 'src\GvrDongleEmu\build.cmd')`"" | Select-Object -Last 2
 if (-not (Test-Path $built)) { throw "build produced no DLL at $built" }
 Write-Host ("      built {0} bytes" -f (Get-Item $built).Length)
 

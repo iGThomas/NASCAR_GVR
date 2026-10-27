@@ -72,9 +72,9 @@ function Fail($m) { throw $m }
 
 if (!(Test-Path -LiteralPath $PluginPath)) { Fail "plug-in not found: $PluginPath" }
 if ([string]::IsNullOrEmpty($DnlibPath)) {
-    $DnlibPath = "D:\NFSU_GVR\Tools\lib\dnlib.net45.dll"
+    $DnlibPath = Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "lib\dnlib.net45.dll"
 }
-if (!(Test-Path -LiteralPath $DnlibPath)) { Fail "dnlib (net45 build) not found at $DnlibPath" }
+if (!(Test-Path -LiteralPath $DnlibPath)) { Fail "dnlib (net45 build) not found at $DnlibPath - pass -DnlibPath <path to dnlib.dll>" }
 
 Add-Type -Path $DnlibPath
 

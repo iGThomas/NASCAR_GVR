@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-10-23-nascar-portable-4.15" # 4.15: default folder NASCAR_GVR_1.1 and desktop/start shortcut "NASCAR Racing" (was "NASCAR Team Racing") so the 1.1 and 2.0.2 editions install side by side without clashing; the old shortcut is migrated on install and uninstall. 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
+$Version = "2026-10-27-nascar-portable-4.16" # 4.16: release v1.2.0 (NASCAR Racing 1.1.1; one zip with NASCAR Team Racing - Install.bat asks which game) - runs on any Windows region format (the attract never loaded on day/month Windows; the shell now runs as en-US), the game can never restart the PC (nightly restart check patched off in NASCARPlugIn.dll + restart calls blocked), race display modes up to 16384 pixels (5120x1440), wheels with pedals / a gear shifter / a separate rim or button boxes on their own USB cables, set up automatically (pedals and shifter type learned from use, PC pedals calibrated on the arcade's own screen and saved in nascar_calibration.ini (kept as player data); [Wheel] overrides), database password masked in the log, region format in the launcher log (rebuilt GvrIO.dll, NascarLaunch.exe, GvrSqlite.dll). 4.15: default folder NASCAR_GVR_1.1 and desktop/start shortcut "NASCAR Racing" (was "NASCAR Team Racing") so the 1.1 and 2.0.2 editions install side by side without clashing; the old shortcut is migrated on install and uninstall. 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -191,7 +191,7 @@ function Get-InstallKind($root) {
     }
     # a stopped earlier install: nothing but our own top-level names
     $ours = @("Game", "Shell", "GVR", "LOG", "Fonts", "NascarLaunch.exe", "nascar_settings.ini",
-              "nascar_registry.ini", "NASCAR_GVR.ico", $MarkerName)
+              "nascar_registry.ini", "nascar_calibration.ini", "NASCAR_GVR.ico", $MarkerName)
     $strangers = @($items | Where-Object { $ours -notcontains $_.Name })
     if ($ourFile -and $strangers.Count -eq 0) { return "ours-partial" }
     return "foreign"
@@ -286,11 +286,12 @@ function Merge-Settings($dst, $tpl) {
 # ---- the player's data: never lost by an install, update or repair ---------------------------
 # Leaderboards, player/driver/track stats, players and the operator's settings live in
 # GVR\GvrPlus\game.db; the player's settings in nascar_settings.ini; the game's own state in
-# nascar_registry.ini; the race's profile/controls/garage in Game\Save. An update never replaces
+# nascar_registry.ini; the pedal calibration in nascar_calibration.ini; the race's
+# profile/controls/garage in Game\Save. An update never replaces
 # them; a -ForceOverwrite reinstall keeps them too (only -ResetData resets them). Before every
 # install/update they are copied to <install>\Backup\<time> (newest 5 kept), and uninstall copies
 # them to Documents\NASCAR_GVR Backup before the folder is removed.
-$PlayerDataItems = @("GVR\GvrPlus\game.db", "nascar_settings.ini", "nascar_registry.ini", "Game\Save")
+$PlayerDataItems = @("GVR\GvrPlus\game.db", "nascar_settings.ini", "nascar_registry.ini", "nascar_calibration.ini", "Game\Save")
 function Backup-PlayerData($root, $dest) {
     $have = @($PlayerDataItems | Where-Object { Test-Path -LiteralPath (Join-Path $root $_) })
     if ($have.Count -eq 0) { return $null }
@@ -1382,7 +1383,7 @@ if (!(Test-Admin)) {
 # so stop before touching anything and say which files are gone and why.
 # KEEP IN SYNC with $files in Tools\Make-Release.ps1 (everything the installer reads).
 $ReleaseFiles = @(
-    "Install.bat", "Install-NASCAR-GVR-Portable.ps1",
+    "Install.bat", "Install-NASCAR-GVR-Portable.ps1", "Install-NASCAR.ps1",
     "Patches\nascar-bytepatches.txt",
     "Deploy\PLUSDE.dll", "Deploy\GvrSqlite.dll", "Deploy\sqlite3.dll", "Deploy\game.db",
     "Tools\unshield.exe", "Tools\Fix-GvrDirNames.ps1", "Tools\Check-DotNet11.ps1",

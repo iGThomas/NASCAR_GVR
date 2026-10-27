@@ -6,6 +6,7 @@ file Shell\bin\Dongle.dll
 file Shell\bin\PlugIns\HerculesPlugIn.dll
 4904 8b450c 33c090
 file Shell\bin\PlugIns\NASCARPlugIn.dll
+d090 558bec 31c0c3
 2d0ac 8b4c2408 33c99090
 38380 44 3f
 8d442 53 47

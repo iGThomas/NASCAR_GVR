@@ -356,14 +356,27 @@ static LONG open_private(HKEY parent, const char* sub, PHKEY out, bool create, b
     return *out ? ERROR_SUCCESS : ERROR_NOT_ENOUGH_MEMORY;
 }
 
+// HKCU subkeys this process must see as absent (privreg_hide_user_key). Read without g_lock:
+// the list is filled once before the hooks go live and never changes.
+static char g_hidden[4][128];
+static int  g_nHidden = 0;
+
+static bool hidden_user_key(HKEY h, const char* sub)
+{
+    if (h != HKEY_CURRENT_USER || !sub || !g_nHidden) return false;
+    for (int i = 0; i < g_nHidden; i++)
+        if (_stricmp(sub, g_hidden[i]) == 0) return true;
+    return false;
+}
+
 static LONG WINAPI xOpenExA(HKEY h, LPCSTR s, DWORD o, REGSAM sam, PHKEY r)
-{ bool d; LONG e = open_private(h, s, r, false, &d, NULL); return d ? e : oOpenExA(h, s, o, sam, r); }
+{ if (hidden_user_key(h, s)) return ERROR_FILE_NOT_FOUND; bool d; LONG e = open_private(h, s, r, false, &d, NULL); return d ? e : oOpenExA(h, s, o, sam, r); }
 static LONG WINAPI xOpenExW(HKEY h, LPCWSTR s, DWORD o, REGSAM sam, PHKEY r)
-{ char a[600]; w2a(s, a, sizeof a); bool d; LONG e = open_private(h, a, r, false, &d, NULL); return d ? e : oOpenExW(h, s, o, sam, r); }
+{ char a[600]; w2a(s, a, sizeof a); if (hidden_user_key(h, a)) return ERROR_FILE_NOT_FOUND; bool d; LONG e = open_private(h, a, r, false, &d, NULL); return d ? e : oOpenExW(h, s, o, sam, r); }
 static LONG WINAPI xOpenA(HKEY h, LPCSTR s, PHKEY r)
-{ bool d; LONG e = open_private(h, s, r, false, &d, NULL); return d ? e : oOpenA(h, s, r); }
+{ if (hidden_user_key(h, s)) return ERROR_FILE_NOT_FOUND; bool d; LONG e = open_private(h, s, r, false, &d, NULL); return d ? e : oOpenA(h, s, r); }
 static LONG WINAPI xOpenW(HKEY h, LPCWSTR s, PHKEY r)
-{ char a[600]; w2a(s, a, sizeof a); bool d; LONG e = open_private(h, a, r, false, &d, NULL); return d ? e : oOpenW(h, s, r); }
+{ char a[600]; w2a(s, a, sizeof a); if (hidden_user_key(h, a)) return ERROR_FILE_NOT_FOUND; bool d; LONG e = open_private(h, a, r, false, &d, NULL); return d ? e : oOpenW(h, s, r); }
 static LONG WINAPI xCreateExA(HKEY h, LPCSTR s, DWORD res, LPSTR c, DWORD o, REGSAM sam, LPSECURITY_ATTRIBUTES sa, PHKEY r, LPDWORD disp)
 { bool d; LONG e = open_private(h, s, r, true, &d, disp); return d ? e : oCreateExA(h, s, res, c, o, sam, sa, r, disp); }
 static LONG WINAPI xCreateExW(HKEY h, LPCWSTR s, DWORD res, LPWSTR c, DWORD o, REGSAM sam, LPSECURITY_ATTRIBUTES sa, PHKEY r, LPDWORD disp)
@@ -582,6 +595,13 @@ static LONG WINAPI xEnumValW(HKEY h, DWORD i, LPWSTR n, LPDWORD nc, LPDWORD r, L
 typedef DWORD (WINAPI *PFN_MappedName)(HANDLE, LPVOID, LPSTR, DWORD);
 static HANDLE g_trace = INVALID_HANDLE_VALUE;
 static PFN_MappedName g_mappedName = NULL;
+
+void privreg_hide_user_key(const char* subkey)
+{
+    if (!subkey || g_nHidden >= 4) return;
+    lstrcpynA(g_hidden[g_nHidden], subkey, sizeof g_hidden[0]);
+    g_nHidden++;
+}
 
 void privreg_trace(const char* path)
 {

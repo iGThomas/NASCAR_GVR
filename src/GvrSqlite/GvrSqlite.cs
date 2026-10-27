@@ -298,6 +298,11 @@ namespace GvrSqlite
         internal Hashtable ColMeta;   // "table.column" -> sql-server type string (optional)
 
         public GvrConnection() { }
+        // SqlConnection(string connectionString) equivalent. 2.0.2's Operator.dll (and other
+        // patched assemblies) construct the connection with the connection string directly
+        // (new GvrConnection(cs)); 1.1's PLUSDE only used the parameterless ctor + the setter,
+        // so this was missing and threw MissingMethodException deep in shell init.
+        public GvrConnection(string connectionString) { _cs = connectionString; }
 
         public string ConnectionString { get { return _cs; } set { _cs = value; } }
         public ConnectionState State { get { return _state; } }
@@ -371,11 +376,33 @@ namespace GvrSqlite
             return null;
         }
 
+        // The connection string is the cabinet's own SQL Server login (decrypted from the disc's
+        // config); players post these logs publicly, so the password is never written out.
+        static string MaskCs(string cs)
+        {
+            if (cs == null) return null;
+            string[] keys = { "password=", "pwd=" };
+            string low = cs.ToLower();
+            foreach (string k in keys)
+            {
+                int i = low.IndexOf(k);
+                while (i >= 0)
+                {
+                    int v = i + k.Length, end = cs.IndexOf(';', v);
+                    if (end < 0) end = cs.Length;
+                    cs = cs.Substring(0, v) + "***" + cs.Substring(end);
+                    low = cs.ToLower();
+                    i = low.IndexOf(k, v + 3);
+                }
+            }
+            return cs;
+        }
+
         public void Open()
         {
             if (_state == ConnectionState.Open) return;
             string path = ResolveDbPath();
-            Log.W("Open cs=[" + _cs + "] -> db=[" + path + "]");
+            Log.W("Open cs=[" + MaskCs(_cs) + "] -> db=[" + path + "]");
             int rc = Native.sqlite3_open(Native.Utf8z(path), out Db);
             Log.W("sqlite3_open rc=" + rc);
             if (rc != Native.OK) throw new GvrException("sqlite3_open failed (" + rc + ") for " + path);
@@ -419,12 +446,13 @@ namespace GvrSqlite
     {
         public string ParameterName;
         public SqlDbType SqlType;
-        public int Size;
+        private int _size;
+        public int Size { get { return _size; } set { _size = value; } }
         public string SourceColumn;
         private object _value;
         public object Value { get { return _value; } set { _value = value; } }
         public GvrParameter(string name, SqlDbType t, int size, string src)
-        { ParameterName = name; SqlType = t; Size = size; SourceColumn = src; }
+        { ParameterName = name; SqlType = t; _size = size; SourceColumn = src; }
     }
 
     public sealed class GvrParameterCollection

@@ -119,7 +119,7 @@ Xbox pads through XInput, PS4 DualShock 4 through raw HID (USB or Bluetooth). Bu
 the sticks and triggers are the cabinet's analog wheel and pedals, and each button "holds" the
 cabinet key it stands for in GvrIO's own keyboard, so both programs treat it exactly like the
 cabinet button. Map: `nascar_settings.ini` `[Controller]` (race) and `[Frontend]` (menus), as
-`action = button` lines with named buttons; `GVRIOSHIM_NO_PAD=1` turns it off. How it works:
+`button = action` lines (e.g. `Square = shiftup`); `GVRIOSHIM_NO_PAD=1` turns it off. How it works:
 `NASCAR_FINDINGS.md` §14.
 
 | Pad (Xbox) | Race | Menus |
@@ -246,5 +246,54 @@ once the race (NASCAR_GVR.exe) loaded - each program makes its own `real_pedals`
 race's OEM Steering.dll reported a calibrated range. The 1.0.9 `wheel_present()` override covers both.
 Paddles "not working" in the race = automatic transmission: sequential (paddles) and H-shifter gears
 only act in **manual**, chosen on the shell's transmission screen.
+
+**2026-10-26 - several devices, set up by themselves.** Direct-drive rigs split the controls over
+several USB devices (base, pedal box, shifter, rim, button box). The shim reads them together and
+decides each role itself; every `[Wheel]` device setting is only an override:
+* Wheel: `Device`, else a force-feedback driving device, else a force-feedback device that is not a
+  gamepad (a base listed as a joystick), else a driving device - never a pedal box or shifter.
+* Pedals: `PedalDevice`, else a name with "pedal" / "LCM", else learned: for a wheel that is not a
+  known model, every other device is watched and the first whose axis rests at an end of its range
+  and then travels more than half of it (a pedal; stick and wheel axes rest in the middle; at least
+  two such axes) becomes the pedal box. Its pedal axes in order are gas, brake (clutch ignored);
+  Rz + Y is read Logitech-style (gas Rz). Known models (Logitech, Thrustmaster presets) keep their
+  own pedals, so a USB handbrake never takes over.
+* Shifter: `ShifterDevice`, else "shift" / "TH8" / "TSS". `ShifterMode = auto` learns the type: a
+  button held over 0.4 s is an H-pattern gear (buttons 0..5 = gears 1..4, 4, 4), two short taps
+  without such a hold make it sequential (0 / 1 = square / triangle = shift up / down). Until then a
+  press waits up to 0.4 s; a tap is passed on as a 150 ms press.
+* Shifter without "shift" in its name (a generic USB shifter): it starts as a button slot; a device
+  with no axes and at most 16 buttons whose single button stays held over 3 s (a gear - rim and box
+  buttons are never held that long) becomes the shifter, H-pattern. Named button boxes never do.
+* Buttons: every other controller that is not a gamepad (a separate rim, a button box) adds its
+  buttons and hat through the wheel's `ButtonN` map; `ButtonBox1..3` (+ `ButtonBoxKButtonN`) name them.
+* Pedal calibration is the cabinet's own. The I/O board keeps per pedal a raw position (GvrIO
+  msg 6 = `Gvr.AxisRawY/Z`) and a min / max (`0x39` / `0x3A` = `Gvr.AxisMin/MaxY/Z`) that grows as
+  the pedal moves; `Gvr.ResetCalibration = true` (msg `0x53`) clears it; `Gvr.AxisY/Z` (msg 5) is the
+  calibrated value. `Shell.am` shows `PedalCalibrate` ("Calibrate the accelerator and brake") when
+  max - min < 40, and the operator Control Test resets it on Start + Music. For PC pedals the shim
+  plays the board (property table of `ZeusIOPlugIn.dll`, identical message ids in 1.1 and 2.0.2):
+  raw = travel from the released position, 0..255 of the axis; min / max saved in
+  `<install>\nascar_calibration.ini` for the pedal device (`[Pedals] Device`, `GasMin/Max`,
+  `BrakeMin/Max`), so the shell and every race share it and new pedals start uncalibrated (the
+  shell asks once). Until calibrated, 100 % = the deepest point reached in that race (at least half
+  the axis). Pads and combined Logitech pedals keep the former fixed 0..255 answer (no screen).
+  The maker's calibration (FanaLab, Pit House ...) applies first - the shim reads DirectInput's
+  calibrated values and only overrides the Windows dead zone / saturation (0 / 100 %).
+  The calibration screen reads only the raw / min / max messages, so those make the shim read the
+  controller (at most every 10 ms). Tested end to end with a PS4 pad standing in for pedals
+  (developer switch `GVRIOSHIM_TEST_PAD_AS_WHEEL=1` with `[Wheel] Gas = ry`, `Brake = rx`): screen
+  shown, presses saved, the race used the range, the next start skipped the screen.
+* Steering: the cabinet's `Steering` slide is a power-on self-test of its force-feedback motor
+  (`Gvr.AutoCalibrateSteering`, device 5; it runs only after an unscheduled Windows restart) - PC
+  wheels calibrate their centre and ends themselves. The shim answers `Gvr.AxisRawX` (msg 6, axis 0)
+  with the PC wheel's steering (-127..127), so the operator Control Test's drawn wheel follows it.
+  Steering lock is `[Wheel] Rotation` / `DeviceRange` or the maker's software.
+* Gamepads are never a wheel part or a button box: DirectInput types a PS4 pad as "other", so pads
+  are also recognised by maker (Sony, Nintendo, Microsoft).
+* Force feedback: `arcade` uses Steering.dll, which only opens devices that report as a driving
+  device; for any other force-feedback base the shim's own spring + damper take over.
+The log lists every controller, then one `controls:` line (repeated whenever something is learned):
+`controls: wheel '...' | pedals '...' (learned) | shifter '...' (sequential) | buttons '...' | force feedback: ours`.
 
 **2026-10-12:** on a Switch Pro pad the operator menu is on **Minus**. `latch_switch` swaps the Minus/Plus positions in the front end only (Minus reports as Options); in the race Plus stays Start.

@@ -94,7 +94,7 @@ skipped rather than blindly upserting prefixed column names that are not columns
 ## Build it
 
 ```powershell
-cd D:\NFSU_GVR\NASCAR
+cd <the repo folder>
 .\Tools\Build-SqliteBackend.ps1
 ```
 

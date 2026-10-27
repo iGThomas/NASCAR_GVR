@@ -34,3 +34,7 @@ void privreg_attach(const char* installRoot, const PrivRegConfig* cfg,
 // Diagnostic: log every hooked registry call (caller module, key, result) to path.
 // Call before privreg_attach so the hooks are traced from the first call.
 void privreg_trace(const char* path);
+// Make HKCU\<subkey> look absent to this process (opens fail with ERROR_FILE_NOT_FOUND).
+// Call before privreg_attach. Used by the NASCAR 2.0.2 shell for "Control Panel\\International",
+// whose user date format .NET 1.1 reads directly from the registry.
+void privreg_hide_user_key(const char* subkey);
