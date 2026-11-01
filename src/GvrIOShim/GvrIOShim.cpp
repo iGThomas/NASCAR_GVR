@@ -1220,6 +1220,43 @@ static LONG WINAPI veh_handler(EXCEPTION_POINTERS* ep)
     return EXCEPTION_CONTINUE_SEARCH;
 }
 
+// [Debug] Log: every DLL loaded from outside Windows and the install folder - overlays and hook
+// DLLs (Discord, RivaTuner, recording / FPS tools, ReShade, Steam) are a classic cause of crashes in
+// old OpenGL / DirectDraw programs. Listed 15 s and 60 s after start (some inject only when the
+// window or the renderer appears); the second pass lists only newcomers.
+static DWORD WINAPI ModuleScanThread(LPVOID)
+{
+    char win[MAX_PATH] = "", root[MAX_PATH] = "";
+    GetWindowsDirectoryA(win, MAX_PATH);
+    if (shim_settings_path(root, sizeof root)) { char* s = strrchr(root, '\\'); if (s) *s = 0; }
+    static char seen[64][MAX_PATH]; int nSeen = 0;
+    static const DWORD waits[2] = { 15000, 45000 };
+    typedef BOOL (WINAPI *PFN_Enum)(HANDLE, HMODULE*, DWORD, LPDWORD);   // kernel32 (Win7+), else psapi (XP)
+    PFN_Enum enumMods = (PFN_Enum)GetProcAddress(GetModuleHandleA("kernel32.dll"), "K32EnumProcessModules");
+    if (!enumMods) { HMODULE ps = LoadLibraryA("psapi.dll"); if (ps) enumMods = (PFN_Enum)GetProcAddress(ps, "EnumProcessModules"); }
+    if (!enumMods) return 0;
+    for (int pass = 0; pass < 2; ++pass) {
+        Sleep(waits[pass]);
+        HMODULE mods[512]; DWORD need = 0;
+        if (!enumMods(GetCurrentProcess(), mods, sizeof mods, &need)) continue;
+        int n = (int)(need / sizeof(HMODULE)), found = 0;
+        if (n > 512) n = 512;
+        for (int i = 0; i < n; ++i) {
+            char p[MAX_PATH];
+            if (!GetModuleFileNameA(mods[i], p, MAX_PATH)) continue;
+            if ((win[0] && _strnicmp(p, win, strlen(win)) == 0) || (root[0] && _strnicmp(p, root, strlen(root)) == 0)) continue;
+            bool old = false;
+            for (int k = 0; k < nSeen; ++k) if (_stricmp(seen[k], p) == 0) old = true;
+            if (old) continue;
+            if (nSeen < 64) lstrcpynA(seen[nSeen++], p, MAX_PATH);
+            logf("modules: loaded from outside Windows and the game: %s", p);
+            ++found;
+        }
+        if (pass == 0 && !found) logf("modules: nothing loaded from outside Windows and the game (no overlay / hook DLLs)");
+    }
+    return 0;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH) {
@@ -1276,6 +1313,7 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
         if (!g_isShell) patch_music_playlist();
         HANDLE h = CreateThread(NULL, 0, WatchdogThread, NULL, 0, NULL);
         if (h) CloseHandle(h);
+        if (g_logging) { h = CreateThread(NULL, 0, ModuleScanThread, NULL, 0, NULL); if (h) CloseHandle(h); }
     }
     return TRUE;
 }

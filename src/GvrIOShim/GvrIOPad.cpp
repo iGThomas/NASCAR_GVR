@@ -1080,6 +1080,19 @@ static const unsigned char* WINAPI hook_glGetString(unsigned int name)
     const unsigned char* s = g_realGlGetString(name);
     if (name != 0x1F03 || !s) return s;                       // GL_EXTENSIONS only
     const char* ver = (const char*)g_realGlGetString(0x1F02); // GL_VERSION "major.minor..."
+    {   // the GPU / driver the front end really draws with (the launcher's probe may differ), once each
+        static char s_last[3][160]; static volatile LONG s_n = 0;
+        const char* ren = (const char*)g_realGlGetString(0x1F01);
+        const char* ven = (const char*)g_realGlGetString(0x1F00);
+        char cur[160]; _snprintf(cur, sizeof cur, "%s / %s", ven ? ven : "?", ren ? ren : "?"); cur[sizeof cur - 1] = 0;
+        bool known = false;
+        for (LONG i = 0; i < s_n && i < 3; ++i) if (strcmp(s_last[i], cur) == 0) known = true;
+        if (!known && s_n < 3) {
+            lstrcpynA(s_last[s_n], cur, sizeof s_last[0]); InterlockedIncrement(&s_n);
+            shim_log("opengl: front end draws with %s, OpenGL %s, extension list %u characters",
+                     cur, ver ? ver : "?", (unsigned)strlen((const char*)s));
+        }
+    }
     int major = ver ? atoi(ver) : 0, minor = 0;
     const char* dot = ver ? strchr(ver, '.') : NULL;
     if (dot) minor = atoi(dot + 1);

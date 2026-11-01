@@ -3,14 +3,66 @@
 // and calls: +0x08 Release, +0x1C (a,b), +0x24 (), +0x28 (record*). Everything is forwarded to
 // OutputDebugString as "AKLOG:" lines. Only AMPlayer gets an object; the AKPlu*.dll plug-ins (which
 // may use other slots with unknown signatures) are refused.
+// With [Debug] Log=true in the install's nascar_settings.ini the same lines also go to
+// <install>\LOG\aklog-AMPlayer.log - the front end's script errors and first-chance exceptions,
+// which a player cannot capture from the debug output (capped at 8 MB per file).
 #include <windows.h>
 #include <stdio.h>
 
 static const CLSID CLSID_AKLog2 = {0xDE411D6F,0x2BDA,0x444C,{0xAC,0x87,0x91,0x71,0xBA,0xFD,0x9E,0x99}};
 static const IID   IID_AKLog2   = {0x18725949,0x89C4,0x460C,{0xA0,0x92,0x75,0x52,0x0B,0xFF,0xB5,0x42}};
 static HMODULE g_self;
+static volatile LONG g_fileState = 0;           // 0 = not decided, 1 = deciding, 2 = decided
+static HANDLE g_file = INVALID_HANDLE_VALUE;
+static volatile LONG g_fileBytes = 0;
+static bool g_inDllMain = false;
 
-static void out(const char* s) { OutputDebugStringA(s); }
+// Decided on the first line after DllMain: nascar_settings.ini is searched upwards from this DLL
+// (Shell\bin -> install root), and [Debug] Log=true opens LOG\aklog-AMPlayer.log for appending.
+static void file_open(void)
+{
+    char dir[MAX_PATH]; GetModuleFileNameA(g_self, dir, MAX_PATH);
+    for (int up = 0; up < 4; ++up) {
+        char* sl = strrchr(dir, '\\'); if (!sl) return; *sl = 0;
+        char ini[MAX_PATH], v[16]; _snprintf(ini, sizeof ini, "%s\\nascar_settings.ini", dir); ini[MAX_PATH - 1] = 0;
+        if (GetFileAttributesA(ini) == INVALID_FILE_ATTRIBUTES) continue;
+        GetPrivateProfileStringA("Debug", "Log", "false", v, sizeof v, ini);
+        if (_stricmp(v, "true") && strcmp(v, "1")) return;
+        char path[MAX_PATH]; _snprintf(path, sizeof path, "%s\\LOG", dir); path[MAX_PATH - 1] = 0;
+        CreateDirectoryA(path, NULL);
+        strncat(path, "\\aklog-AMPlayer.log", MAX_PATH - strlen(path) - 1);
+        WIN32_FILE_ATTRIBUTE_DATA fa;
+        bool big = GetFileAttributesExA(path, GetFileExInfoStandard, &fa) && (fa.nFileSizeHigh || fa.nFileSizeLow > 8u << 20);
+        g_file = CreateFileA(path, FILE_APPEND_DATA, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL,
+                             big ? CREATE_ALWAYS : OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+        if (g_file != INVALID_HANDLE_VALUE) {
+            SYSTEMTIME t; GetLocalTime(&t); char h[96];
+            int n = _snprintf(h, sizeof h, "==== AKLogShim %04d-%02d-%02d %02d:%02d:%02d pid=%lu ====\r\n",
+                              t.wYear, t.wMonth, t.wDay, t.wHour, t.wMinute, t.wSecond, GetCurrentProcessId());
+            DWORD w; WriteFile(g_file, h, n, &w, NULL);
+        }
+        return;
+    }
+}
+
+static void out(const char* s)
+{
+    OutputDebugStringA(s);
+    if (g_inDllMain) return;                    // no file I/O under the loader lock
+    if (g_fileState != 2) {
+        if (InterlockedCompareExchange(&g_fileState, 1, 0) == 0) { file_open(); InterlockedExchange(&g_fileState, 2); }
+        else return;                            // another thread is deciding: this line goes to the debug output only
+    }
+    if (g_file == INVALID_HANDLE_VALUE || g_fileBytes > (8 << 20)) return;
+    SYSTEMTIME t; GetLocalTime(&t);
+    char b[1400];
+    int n = _snprintf(b, sizeof b - 3, "%02d:%02d:%02d.%03d %s", t.wHour, t.wMinute, t.wSecond, t.wMilliseconds, s);
+    if (n < 0) n = sizeof b - 3;
+    if (n && b[n - 1] == '\n') --n;
+    b[n++] = '\r'; b[n++] = '\n';
+    DWORD w; WriteFile(g_file, b, n, &w, NULL);   // one appending write per line: no lock needed
+    InterlockedExchangeAdd(&g_fileBytes, n);
+}
 static void outf(const char* f, ...) { char b[1200]; va_list a; va_start(a,f); _vsnprintf(b,sizeof b-1,f,a); b[sizeof b-1]=0; va_end(a); out(b); }
 
 static bool readable(const void* p, size_t n) {
@@ -165,9 +217,10 @@ extern "C" HRESULT __stdcall DllGetClassObject(REFCLSID c, REFIID r, void** o) {
 extern "C" HRESULT __stdcall DllCanUnloadNow() { return S_FALSE; }
 BOOL WINAPI DllMain(HINSTANCE h, DWORD r, LPVOID) {
     if (r==DLL_PROCESS_ATTACH) {
-        g_self=h; DisableThreadLibraryCalls(h);
+        g_self=h; DisableThreadLibraryCalls(h); g_inDllMain=true;
         if (host_is_202()) { AddVectoredExceptionHandler(1,Veh); out("AKLOG: exception logger armed\n"); }
         else out("AKLOG: not the 2.0.2 AMPlayer - AKLog2 refused, no exception logger\n");
+        g_inDllMain=false;
     }
     return TRUE;
 }

@@ -690,6 +690,165 @@ static void preload_dll(const PROCESS_INFORMATION& pi, const char* dll)
     else logf("preloading %s", dll);
 }
 
+// ---------------------------------------------------------------- session diagnostics ([Debug] Log)
+//
+// 1. Debug output. The front ends and the race report script errors, .NET exceptions and progress
+//    ("GvrShell Loading NASCAR_Attract.am", "Activating Slide 0") only through OutputDebugString,
+//    which a player cannot capture. While the session runs the launcher is the DBWIN listener and
+//    writes every line from a program inside the install folder to LOG\debug-output.log (8 MB cap).
+//    If another listener (a debugger, DebugView) already owns DBWIN it steps aside.
+// 2. After the session: Windows' own crash records for the game's programs (Event Log) and the race
+//    engine's traces (Game\LOG\trace*.txt) of this session, so one zipped LOG folder has them.
+static FILE* g_dbgFile = NULL;
+static SYSTEMTIME g_sessionStart;
+static FILETIME   g_sessionStartFt;
+
+struct DbwinCtx { HANDLE ready, data; const char* view; };
+static bool pid_is_ours(DWORD pid)
+{
+    static DWORD cachePid[64]; static char cacheOk[64]; static int n = 0;
+    for (int i = 0; i < n; ++i) if (cachePid[i] == pid) return cacheOk[i] != 0;
+    typedef BOOL (WINAPI *PFN_Q)(HANDLE, DWORD, LPSTR, PDWORD);
+    static PFN_Q q = (PFN_Q)GetProcAddress(GetModuleHandleA("kernel32.dll"), "QueryFullProcessImageNameA");
+    char path[MAX_PATH] = ""; DWORD len = MAX_PATH;
+    HANDLE h = OpenProcess(0x1000 /*PROCESS_QUERY_LIMITED_INFORMATION*/, FALSE, pid);
+    bool ok = false;
+    if (h) { ok = q && q(h, 0, path, &len) && _strnicmp(path, g_root, strlen(g_root)) == 0; CloseHandle(h); }
+    if (pid == GetCurrentProcessId()) ok = false;
+    int slot = n < 64 ? n++ : (int)(pid % 64);
+    cachePid[slot] = pid; cacheOk[slot] = ok;
+    return ok;
+}
+
+static const char* pid_name(DWORD pid)
+{
+    static char name[MAX_PATH];
+    typedef BOOL (WINAPI *PFN_Q)(HANDLE, DWORD, LPSTR, PDWORD);
+    static PFN_Q q = (PFN_Q)GetProcAddress(GetModuleHandleA("kernel32.dll"), "QueryFullProcessImageNameA");
+    lstrcpynA(name, "?", sizeof name);
+    HANDLE h = OpenProcess(0x1000, FALSE, pid);
+    if (h) { DWORD len = MAX_PATH; if (q && q(h, 0, name, &len)) { const char* b = strrchr(name, '\\'); if (b) memmove(name, b + 1, strlen(b)); } CloseHandle(h); }
+    return name;
+}
+
+static DWORD WINAPI dbwin_thread(LPVOID p)
+{
+    DbwinCtx* c = (DbwinCtx*)p;
+    long written = 0;
+    for (;;) {
+        SetEvent(c->ready);
+        if (WaitForSingleObject(c->data, INFINITE) != WAIT_OBJECT_0) return 0;
+        DWORD pid = *(const DWORD*)c->view;
+        char msg[4096 - sizeof(DWORD) + 1];
+        memcpy(msg, c->view + sizeof(DWORD), sizeof msg - 1); msg[sizeof msg - 1] = 0;
+        if (!pid_is_ours(pid) || written > (8L << 20)) continue;
+        size_t n = strlen(msg);
+        while (n && (msg[n - 1] == '\n' || msg[n - 1] == '\r')) msg[--n] = 0;
+        if (!n) continue;
+        SYSTEMTIME t; GetLocalTime(&t);
+        written += fprintf(g_dbgFile, "[%02d:%02d:%02d.%03d] %s %lu: %s\n",
+                           t.wHour, t.wMinute, t.wSecond, t.wMilliseconds, pid_name(pid), pid, msg);
+        fflush(g_dbgFile);                     // a crash or a kill must not lose the last lines
+    }
+}
+
+static void debug_capture_start(void)
+{
+    GetLocalTime(&g_sessionStart);
+    GetSystemTimeAsFileTime(&g_sessionStartFt);
+    HANDLE probe = OpenEventA(SYNCHRONIZE, FALSE, "DBWIN_BUFFER_READY");
+    if (probe) { CloseHandle(probe); logf("debug output: another listener (a debugger / DebugView) is running - not captured"); return; }
+    static DbwinCtx c;
+    HANDLE map = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, 4096, "DBWIN_BUFFER");
+    c.ready = CreateEventA(NULL, FALSE, FALSE, "DBWIN_BUFFER_READY");
+    c.data  = CreateEventA(NULL, FALSE, FALSE, "DBWIN_DATA_READY");
+    c.view  = map ? (const char*)MapViewOfFile(map, FILE_MAP_READ, 0, 0, 0) : NULL;
+    char path[MAX_PATH]; snprintf(path, sizeof(path), "%s\\LOG\\debug-output.log", g_root);
+    WIN32_FILE_ATTRIBUTE_DATA fa;
+    if (GetFileAttributesExA(path, GetFileExInfoStandard, &fa) && fa.nFileSizeLow > (8u << 20)) DeleteFileA(path);
+    g_dbgFile = fopen(path, "a");
+    if (!c.view || !c.ready || !c.data || !g_dbgFile) { logf("debug output: could not start the listener (%lu)", GetLastError()); return; }
+    fprintf(g_dbgFile, "==== session %04d-%02d-%02d %02d:%02d:%02d ====\n", g_sessionStart.wYear, g_sessionStart.wMonth,
+            g_sessionStart.wDay, g_sessionStart.wHour, g_sessionStart.wMinute, g_sessionStart.wSecond);
+    fflush(g_dbgFile);
+    HANDLE th = CreateThread(NULL, 0, dbwin_thread, &c, 0, NULL);
+    if (th) CloseHandle(th);
+    logf("debug output: captured to LOG\\debug-output.log");
+}
+
+// Runs a console command hidden and returns what it printed (at most ~256 KB).
+static std::string run_capture(const char* cmd)
+{
+    std::string out;
+    SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
+    HANDLE rd, wr;
+    if (!CreatePipe(&rd, &wr, &sa, 0)) return out;
+    SetHandleInformation(rd, HANDLE_FLAG_INHERIT, 0);
+    STARTUPINFOA si = { sizeof(si) }; si.dwFlags = STARTF_USESTDHANDLES | STARTF_USESHOWWINDOW;
+    si.hStdOutput = wr; si.hStdError = wr; si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = { 0 };
+    std::string c = cmd;
+    if (CreateProcessA(NULL, &c[0], NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+        CloseHandle(wr); wr = NULL;
+        char buf[4096]; DWORD got;
+        while (out.size() < 256 * 1024 && ReadFile(rd, buf, sizeof buf, &got, NULL) && got) out.append(buf, got);
+        WaitForSingleObject(pi.hProcess, 10000);
+        CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+    }
+    if (wr) CloseHandle(wr);
+    CloseHandle(rd);
+    return out;
+}
+
+static void session_report(void)
+{
+    if (g_dbgFile) fflush(g_dbgFile);
+    // the race engine's traces of this session -> LOG\race-<name>
+    char pat[MAX_PATH]; snprintf(pat, sizeof(pat), "%s\\Game\\LOG\\trace*.txt", g_root);
+    WIN32_FIND_DATAA fd; HANDLE f = FindFirstFileA(pat, &fd); int copied = 0;
+    if (f != INVALID_HANDLE_VALUE) {
+        do {
+            if (CompareFileTime(&fd.ftLastWriteTime, &g_sessionStartFt) < 0) continue;
+            char src[MAX_PATH], dst[MAX_PATH];
+            snprintf(src, sizeof(src), "%s\\Game\\LOG\\%s", g_root, fd.cFileName);
+            snprintf(dst, sizeof(dst), "%s\\LOG\\race-%s", g_root, fd.cFileName);
+            if (CopyFileA(src, dst, FALSE)) ++copied;
+        } while (FindNextFileA(f, &fd));
+        FindClose(f);
+    }
+    if (copied) logf("race traces of this session copied to LOG\\race-trace*.txt: %d", copied);
+    // Windows' crash records (they arrive a moment after the exit)
+    Sleep(3000);
+    SYSTEMTIME now; GetLocalTime(&now);
+    FILETIME a, b; SystemTimeToFileTime(&g_sessionStart, &a); SystemTimeToFileTime(&now, &b);
+    ULONGLONG ms = ((((ULONGLONG)b.dwHighDateTime << 32) | b.dwLowDateTime) -
+                    (((ULONGLONG)a.dwHighDateTime << 32) | a.dwLowDateTime)) / 10000 + 60000;
+    char cmd[700];
+    snprintf(cmd, sizeof(cmd), "wevtutil.exe qe Application /rd:true /c:40 /f:text \"/q:*[System[(Provider[@Name='Application Error'] "
+             "or Provider[@Name='Application Hang'] or Provider[@Name='.NET Runtime'] or Provider[@Name='Windows Error Reporting']) "
+             "and TimeCreated[timediff(@SystemTime) <= %llu]]]\"", ms);
+    std::string ev = run_capture(cmd);
+    int shown = 0;
+    for (size_t pos = 0; (pos = ev.find("Event[", pos)) != std::string::npos; ) {
+        size_t end = ev.find("Event[", pos + 6);
+        std::string one = ev.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        pos = end == std::string::npos ? ev.size() : end;
+        std::string low = one; for (size_t i = 0; i < low.size(); i++) low[i] = (char)tolower((unsigned char)low[i]);
+        if (low.find("amplayer") == std::string::npos && low.find("nascar_gvr") == std::string::npos) continue;
+        if (++shown > 6) break;
+        logf("windows crash record %d:", shown);
+        size_t ls = 0; int lines = 0;
+        while (ls < one.size() && lines < 40) {
+            size_t le = one.find('\n', ls); if (le == std::string::npos) le = one.size();
+            std::string line = one.substr(ls, le - ls);
+            while (!line.empty() && (line[line.size() - 1] == '\r' || line[line.size() - 1] == ' ')) line.erase(line.size() - 1);
+            if (!line.empty()) { logf("    %s", line.c_str()); ++lines; }
+            ls = le + 1;
+        }
+    }
+    if (!shown) logf("windows crash records: none for AMPlayer / NASCAR_GVR in this session");
+}
+
 static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, const Settings& s,
                  const char* preload = NULL)
 {
@@ -864,6 +1023,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     snprintf(gameExe,  sizeof(gameExe),  "%s\\NASCAR_GVR.exe", gameDir);
 
     choose_teamracing_renderer(amPlayer);
+    const bool diag = ini_bool("Debug", "Log", false);
+    if (diag) debug_capture_start();
 
     if (s.mode == "race") {
         // Straight into a session, bypassing the cabinet front end. Handy for
@@ -876,6 +1037,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
                  s.fullscreen ? "-fullscreen" : "-windowed", s.width, s.height, s.extraArgs.c_str());
         if (!PathFileExistsA(gameExe)) die("NASCAR_GVR.exe was not found:\n%s", gameExe);
         run(gameExe, args, gameDir, s.waitForExit || s.borderless, s);
+        if (diag && (s.waitForExit || s.borderless)) session_report();
         return 0;
     }
 
@@ -895,5 +1057,6 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     char shim[MAX_PATH];                       // the GvrIO shim: private registry, pad, fixes
     snprintf(shim, sizeof(shim), "%s\\GvrIO.dll", binDir);
     run(amPlayer, args, binDir, s.waitForExit || s.borderless, s, PathFileExistsA(shim) ? shim : NULL);
+    if (diag && (s.waitForExit || s.borderless)) session_report();
     return 0;
 }

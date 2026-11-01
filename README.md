@@ -120,7 +120,9 @@ In the install folder. The main ones:
 - `[Controller]` / `[Frontend]` — the gamepad button map for the race and the menus
 - `[Debug] Log=true` — writes diagnostics to a `LOG` folder in the install root: your PC config
   (CPU, motherboard, GPU + driver version), the launch timeline, a native crash filter for the
-  shell and the race, and the database log. Reproduce the problem once, then zip the `LOG` folder.
+  shell and the race, the database log, the menus' and the race's own messages, the race engine's
+  traces, any overlay or hook DLLs loaded into the game, Windows' crash records for the game, and
+  (Team Racing) the menus' script errors. Reproduce the problem once, then zip the `LOG` folder.
 
 ### Installer options
 
