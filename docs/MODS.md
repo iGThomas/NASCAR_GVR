@@ -54,6 +54,7 @@ others. Tested: MP3, 44.1 kHz, stereo, 128 and 320 kbps. Not tested: 48 kHz, mon
 | Front end crashed (or never showed the attract) on Windows set to a day/month date format, e.g. Dutch, German, Japanese | Shim runs the front end with US region settings (*in memory*; `GVRIOSHIM_NO_LOCALE_FIX=1` turns it off) |
 | Nightly restart prompt restarted the PC | `NASCARPlugIn.dll` patched (file): restart check always "not yet"; shim also blocks `shutdown.exe` and the Windows restart calls (*in memory*) |
 | Database password of the original cabinet written to the log | Password masked in `gvrsqlite.log` |
+| Menus went black (or stayed on "Please Wait") a few seconds after start on PCs where the Windows event source `GVR` was never registered: the database layer logs to the Windows Application log, and .NET 1.1 tried to create the missing source, which needs administrator rights | The installer registers the event source `GVR` (Application log, .NET 1.1's message file); the launcher log warns when it is missing |
 | Front end needs Anark's AKLog2 logger, which never shipped (crashed at start without it) | A stand-in `AKLogShim.dll` is registered; it answers only this front end, so NASCAR Racing 1.1 on the same PC is not affected |
 
 ### Both games

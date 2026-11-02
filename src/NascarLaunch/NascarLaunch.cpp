@@ -403,6 +403,13 @@ static bool probe_opengl(char* what, size_t n)
 static void choose_teamracing_renderer(const char* amPlayer)
 {
     if (!is_teamracing_shell(amPlayer)) return;
+    // The front end logs to the Windows event source "GVR"; without it .NET 1.1 tries to create
+    // the source (administrator only) and the menus go black at start-up. The installer registers it.
+    HKEY ev;
+    if (RegOpenKeyExA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Services\\EventLog\\Application\\GVR", 0,
+                      KEY_READ, &ev) == ERROR_SUCCESS) RegCloseKey(ev);
+    else logf("WARNING: Windows event source GVR is missing - the menus will go black at start-up. "
+              "Run Install.bat again (it registers it).");
     std::string want = ini_str("Display", "Renderer", "auto");
     for (size_t i = 0; i < want.size(); i++) want[i] = (char)tolower((unsigned char)want[i]);
     DWORD r = 2;

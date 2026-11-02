@@ -1464,3 +1464,19 @@ What the package does about it: the launcher tests OpenGL like the 2.0.2 front e
 start and writes `ClientRenderer` (hardware OpenGL 1.3+ = OpenGL, else Direct3D; `[Display]
 Renderer`); the shim adds the four old extension names for hardware OpenGL 1.3+, offers only
 attached displays to the Direct3D device list and logs every device and the one opened.
+
+## 18. Team Racing's Windows event source "GVR" (2026-11-02)
+
+The 2.0.2 Plus layer (`PLUSDE.dll`, managed `GvrDataEngine.LogEvent`) writes its events to the
+`GvrEventLog` table only for a cabinet id above 0 on a "CABINET" tier; with cabinet id 0 (the
+free-play setup of this package) every event goes to the Windows Application log through
+`System.Diagnostics.EventLog`, source `GVR`. On .NET 1.1 `WriteEntry` first checks every event log
+for the source and creates it when missing. As a normal user the search stops with a
+`SecurityException` at the Security log (and creating a source needs administrator rights), so the
+exception surfaces in the front end's `NASCAR_INITIALIZE_SHELL`: the script engine then faults
+(`AMPlayer.exe+0x28BE89` / `+0x28BEA2`, the JavaScript stack allocator), the cabinet-state query
+(`gP2PMacAddressNumber`, `CabinetConfiguration_NAS3`, `GvrCabinetSyncLog`) repeats every frame and
+the menus stay black. Reproduced by removing every `GVR` source key; fixed by registering the source
+(`HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\GVR`, `EventMessageFile` =
+.NET 1.1's `EventLogMessages.dll`), which the installer does. NASCAR Racing 1.1 does not take this
+path.
