@@ -1017,15 +1017,28 @@ static BOOL WINAPI hook_CreateProcessA(LPCSTR app, LPSTR cmd, LPSECURITY_ATTRIBU
     return g_realCreateProcessA(app, cmd, pa, ta, inh, flags, env, dir, si, pi);
 }
 
+// The front-end hooks are set in DllMain, before the shim's log file is open: their results are
+// kept here and written by pad_log_early() once it is (a failed hook used to leave no trace).
+static char g_early[600];
+static void early_note(const char* s)
+{
+    if (strlen(g_early) + strlen(s) + 3 >= sizeof g_early) return;
+    if (g_early[0]) strcat(g_early, ", ");
+    strcat(g_early, s);
+}
+
+void pad_log_early(void)
+{
+    if (g_early[0]) shim_log("taming: front-end hooks - %s", g_early);
+}
+
 static void taming_hook_display(void)
 {
     if (g_realCreateProcessA) return;
     if (GetEnvironmentVariableA("GVRIOSHIM_NO_TAMING", NULL, 0) > 0) return;
-    if (patch_import(GetModuleHandleA(NULL), "KERNEL32.dll", "CreateProcessA",
-                     (void*)hook_CreateProcessA, (void**)&g_realCreateProcessA))
-        shim_log("taming: CreateProcessA hooked - nvcpl/GammaSet display tweaks suppressed");
-    else
-        shim_log("taming: could NOT hook CreateProcessA - display tweaks NOT suppressed");
+    early_note(patch_import(GetModuleHandleA(NULL), "KERNEL32.dll", "CreateProcessA",
+                            (void*)hook_CreateProcessA, (void**)&g_realCreateProcessA)
+               ? "CreateProcessA ok" : "CreateProcessA FAILED (display tweaks not suppressed)");
 }
 
 // NASCAR Racing 1.1's AMPlayer.exe asks for Anark's AKLog2 logger, which never shipped - it runs
@@ -1052,9 +1065,9 @@ static void taming_hook_aklog(void)
     const BYTE* host = (const BYTE*)GetModuleHandleA(NULL);
     const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(host + ((const IMAGE_DOS_HEADER*)host)->e_lfanew);
     if (nt->FileHeader.TimeDateStamp != 0x46AFA277 || g_realCoCreateInstance) return;   // 1.1 AMPlayer.exe only
-    if (!patch_import(GetModuleHandleA(NULL), "ole32.dll", "CoCreateInstance",
-                      (void*)hook_CoCreateInstance, (void**)&g_realCoCreateInstance))
-        shim_log("taming: could NOT hook CoCreateInstance - a registered AKLog2 would load in the 1.1 shell");
+    early_note(patch_import(GetModuleHandleA(NULL), "ole32.dll", "CoCreateInstance",
+                            (void*)hook_CoCreateInstance, (void**)&g_realCoCreateInstance)
+               ? "CoCreateInstance ok" : "CoCreateInstance FAILED (a registered AKLog2 would load)");
 }
 
 // Both shells (Anark AMPlayer.exe) offer OpenGL only when the driver's extension list names all
@@ -1197,21 +1210,21 @@ static HRESULT WINAPI hook_DDCreateEx(GUID* g, LPVOID* dd, REFIID iid, void* out
 static void taming_hook_ddraw(void)
 {
     if (g_realDDEnumExA || GetEnvironmentVariableA("GVRIOSHIM_NO_DD_FIX", NULL, 0) > 0) return;
-    if (!GetModuleHandleA("ddraw.dll")) return;
+    if (!GetModuleHandleA("ddraw.dll")) { early_note("ddraw.dll not loaded yet - DirectDraw not hooked"); return; }
     HMODULE host = GetModuleHandleA(NULL);
-    if (!patch_import(host, "DDRAW.dll", "DirectDrawEnumerateExA", (void*)hook_DDEnumExA, (void**)&g_realDDEnumExA))
-        shim_log("display: could NOT hook DirectDrawEnumerateExA");
-    if (!patch_import(host, "DDRAW.dll", "DirectDrawCreateEx", (void*)hook_DDCreateEx, (void**)&g_realDDCreateEx))
-        shim_log("display: could NOT hook DirectDrawCreateEx");
+    early_note(patch_import(host, "DDRAW.dll", "DirectDrawEnumerateExA", (void*)hook_DDEnumExA, (void**)&g_realDDEnumExA)
+               ? "DirectDrawEnumerateExA ok" : "DirectDrawEnumerateExA FAILED");
+    early_note(patch_import(host, "DDRAW.dll", "DirectDrawCreateEx", (void*)hook_DDCreateEx, (void**)&g_realDDCreateEx)
+               ? "DirectDrawCreateEx ok" : "DirectDrawCreateEx FAILED");
 }
 
 static void taming_hook_opengl(void)
 {
     if (g_realGlGetString || GetEnvironmentVariableA("GVRIOSHIM_NO_GL_FIX", NULL, 0) > 0) return;
-    if (!GetModuleHandleA("opengl32.dll")) return;          // the host does not use OpenGL
-    if (!patch_import(GetModuleHandleA(NULL), "OPENGL32.dll", "glGetString",
-                      (void*)hook_glGetString, (void**)&g_realGlGetString))
-        shim_log("opengl: could NOT hook glGetString - OpenGL may stay greyed out on some drivers");
+    if (!GetModuleHandleA("opengl32.dll")) { early_note("opengl32.dll not loaded yet - glGetString not hooked"); return; }
+    early_note(patch_import(GetModuleHandleA(NULL), "OPENGL32.dll", "glGetString",
+                            (void*)hook_glGetString, (void**)&g_realGlGetString)
+               ? "glGetString ok" : "glGetString FAILED (OpenGL may stay greyed out on some drivers)");
 }
 
 // ------------------------------------------------------------------ public

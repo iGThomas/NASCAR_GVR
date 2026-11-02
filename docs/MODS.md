@@ -80,5 +80,6 @@ database are described in `docs/findings/NASCAR_FINDINGS.md`.
 | Race picture blurry on screens wider than 4096 pixels (e.g. 5120x1440) | Shim accepts display modes up to 16384 pixels (*in memory*) |
 | PC wheel with pedals, a gear shifter, a separate rim or button boxes on their own USB cables ignored (only one controller was read) | All read together and set up automatically (overrides under `[Wheel]`) |
 | Database password of the original cabinet written to the log | Password masked in `gvrsqlite.log` |
+| Menus stuck on a frozen "Please Wait" (music playing) on PCs where the game's own Direct3D 7 test fails: it then greys out Direct3D AND OpenGL and draws in software | Launcher repeats that test before every start: passes = Direct3D 7 as on the cabinet, fails = OpenGL (`[Display] Renderer = auto`; `opengl` / `directx` force one) |
 | With NASCAR Team Racing installed on the same PC, the front end loaded Team Racing's AKLog2 stand-in | Shim answers "not registered" for AKLog2 in this front end, as on a PC without it (*in memory*) |
 

@@ -1257,6 +1257,48 @@ static DWORD WINAPI ModuleScanThread(LPVOID)
     return 0;
 }
 
+// [Debug] Log, front end: the Anark player's own renderer verdict, read from its globals once its
+// renderer test has run (init flag set) - Direct3D 7 / OpenGL / software usable and whether its
+// built-in hardware list matched - next to the saved preferences it starts from. With no usable
+// Direct3D 7 device the 1.1 player greys out Direct3D AND OpenGL and draws in software.
+//   1.1  (stamp 0x46AFA277, sub_63B408DE): init 0x36E580, D3D7 0x36E57F, GL 0x36E57E, SW 0x36E57D, list 0x36E57C
+//   2.0.2 (stamp 0x47C34847, sub_63B44D50): init 0x415830, D3D7 0x41582F, GL 0x41582E, SW 0x41582D, list 0x41582C
+static DWORD WINAPI RendererVerdictThread(LPVOID)
+{
+    const BYTE* host = (const BYTE*)GetModuleHandleA(NULL);
+    const IMAGE_NT_HEADERS* nt = (const IMAGE_NT_HEADERS*)(host + ((const IMAGE_DOS_HEADER*)host)->e_lfanew);
+    DWORD stamp = nt->FileHeader.TimeDateStamp, init, flags;   // flags = RVA of the list byte; +1 SW, +2 GL, +3 D3D7
+    const char* prefs;
+    if (stamp == 0x46AFA277) { init = 0x36E580; flags = 0x36E57C; prefs = "Software\\Anark\\Client\\3.0\\Preferences"; }
+    else if (stamp == 0x47C34847) { init = 0x415830; flags = 0x41582C; prefs = "Software\\Anark\\Client\\4.0\\Preferences"; }
+    else return 0;
+    if (init >= nt->OptionalHeader.SizeOfImage) return 0;
+    BYTE f[4] = { 0 }; bool done = false;
+    for (int i = 0; i < 300 && !done; ++i) {       // up to 60 s
+        Sleep(200);
+        __try {
+            done = host[init] != 0;
+            if (done) memcpy(f, host + flags, 4);
+        } __except (EXCEPTION_EXECUTE_HANDLER) { return 0; }
+    }
+    char cr[32] = "not set", gl[16] = "not set";
+    HKEY k;
+    if (RegOpenKeyExA(HKEY_CURRENT_USER, prefs, 0, KEY_READ, &k) == ERROR_SUCCESS) {
+        DWORD v = 0, n = sizeof v, t = 0;
+        if (RegQueryValueExA(k, "ClientRenderer", NULL, &t, (BYTE*)&v, &n) == ERROR_SUCCESS)
+            _snprintf(cr, sizeof cr, "%lu%s", v, v == 2 ? " (OpenGL)" : v == 3 ? " (Direct3D)" : v == 4 ? " (software)" : "");
+        char s[8] = ""; n = sizeof s;
+        if (RegQueryValueExA(k, "DisableGL", NULL, &t, (BYTE*)s, &n) == ERROR_SUCCESS) lstrcpynA(gl, s, sizeof gl);
+        RegCloseKey(k);
+    }
+    if (!done) { logf("renderer (game's own test): not run within 60 s"); return 0; }
+    logf("renderer (game's own test): Direct3D 7 usable=%s, OpenGL usable=%s, software usable=%s, known-hardware list "
+         "matched=%s; saved choice ClientRenderer=%s, DisableGL=%s%s", f[3] ? "yes" : "NO", f[2] ? "yes" : "NO",
+         f[1] ? "yes" : "NO", f[0] ? "YES" : "no", cr, gl,
+         (!f[3] && !f[2] && strcmp(cr, "not set") == 0) ? " -> the game draws in SOFTWARE (very slow, looks frozen)" : "");
+    return 0;
+}
+
 BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH) {
@@ -1294,6 +1336,7 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
                 else strcpy(g_logPath, "gvrioshim.log");
             }
             logf("--- GvrIO shim attached (proc=%s pid=%lu) ---", proc, GetCurrentProcessId());
+            if (g_isShell) pad_log_early();    // the front-end hooks set before the log was open
             g_prevFilter = SetUnhandledExceptionFilter(crash_filter);
             // A VEH too: the managed shell's CLR shadows the UEF and sends fatal faults to WER,
             // so only a first-chance vectored handler reliably captures the module+offset there.
@@ -1314,6 +1357,7 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
         HANDLE h = CreateThread(NULL, 0, WatchdogThread, NULL, 0, NULL);
         if (h) CloseHandle(h);
         if (g_logging) { h = CreateThread(NULL, 0, ModuleScanThread, NULL, 0, NULL); if (h) CloseHandle(h); }
+        if (g_logging && g_isShell) { h = CreateThread(NULL, 0, RendererVerdictThread, NULL, 0, NULL); if (h) CloseHandle(h); }
     }
     return TRUE;
 }

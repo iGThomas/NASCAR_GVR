@@ -32,4 +32,6 @@ void reg_attach(void);
 // For GvrIOWheel.cpp: a pad position name (cross, l1, dup, ...) -> its button bit (0 = unknown),
 // and a hat direction (0 = up, clockwise; 8 = centred) -> D-pad bits.
 unsigned pad_button_bit(const char* name);
+// GvrIOShim.cpp, once the log is open: the results of the front-end hooks set in pad_attach.
+void pad_log_early(void);
 unsigned pad_hat_bits(int hat);

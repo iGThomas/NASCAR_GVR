@@ -115,8 +115,9 @@ Every control, and how to remap the pad: [docs/findings/NASCAR_CONTROLS.md](docs
 
 In the install folder. The main ones:
 
-- `[Display]` — `Width`, `Height`, `Fullscreen`, `Borderless`; `Renderer` (Team Racing menus:
-  `auto` picks OpenGL when the PC has hardware OpenGL, else Direct3D)
+- `[Display]` — `Width`, `Height`, `Fullscreen`, `Borderless`; `Renderer` for the menus (`auto`
+  picks what works on this PC: Team Racing OpenGL when available, NASCAR Racing Direct3D 7 unless
+  this PC fails the game's Direct3D test, then OpenGL; `opengl` / `directx` force one)
 - `[Controller]` / `[Frontend]` — the gamepad button map for the race and the menus
 - `[Debug] Log=true` — writes diagnostics to a `LOG` folder in the install root: your PC config
   (CPU, motherboard, GPU + driver version), the launch timeline, a native crash filter for the

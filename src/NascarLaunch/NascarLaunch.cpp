@@ -39,8 +39,11 @@
 #include <ctype.h>
 #include <string>
 #include <vector>
+#include <ddraw.h>
+#include <d3d.h>
 
 #pragma comment(lib, "shlwapi.lib")
+#pragma comment(lib, "dxguid.lib")
 
 static char g_root[MAX_PATH];      // install root (folder holding this exe)
 static char g_ini[MAX_PATH];       // nascar_settings.ini
@@ -100,6 +103,88 @@ static bool dotnet11_installed(void)
     if (!n || n > MAX_PATH - 48) return true;          // cannot tell -> do not block
     lstrcatA(p, "\\Microsoft.NET\\Framework\\v1.1.4322\\mscorlib.dll");
     return PathFileExistsA(p) != FALSE;
+}
+
+// [Debug] Log: the PC's DirectX 7 picture exactly as the Anark front ends' D3DX7 device list builds
+// it (DirectDrawEnumerateExA with flags 7 = attached, detached and non-display devices; per device
+// DirectDrawCreateEx, SetCooperativeLevel, GetDeviceIdentifier, Direct3D7 EnumDevices) with the three
+// capabilities NASCAR Racing 1.1 requires before it offers Direct3D or OpenGL (texture ops 0x5C,
+// source blends 0x332, destination blends 0x36 - AMPlayer sub_63B402DF). Logged for every PC, so a
+// report from a PC where the game greys out DirectX shows which step or capability is missing.
+struct DdEnumDev { GUID guid; bool primary; char desc[128], name[64]; HMONITOR mon; };
+struct DdEnumList { DdEnumDev d[12]; int n; };
+static BOOL WINAPI dx7_enum_cb(GUID* g, LPSTR desc, LPSTR name, LPVOID p, HMONITOR m)
+{
+    DdEnumList* l = (DdEnumList*)p;
+    if (l->n >= 12) return FALSE;
+    DdEnumDev& e = l->d[l->n++];
+    e.primary = g == NULL; if (g) e.guid = *g;
+    lstrcpynA(e.desc, desc ? desc : "?", sizeof(e.desc)); lstrcpynA(e.name, name ? name : "?", sizeof(e.name));
+    e.mon = m;
+    return TRUE;
+}
+static HRESULT CALLBACK dx7_report_dev_cb(LPSTR desc, LPSTR name, LPD3DDEVICEDESC7 d, LPVOID p)
+{
+    int* count = (int*)p; ++*count;
+    const GUID& g = d->deviceGUID;
+    const char* kind = IsEqualGUID(g, IID_IDirect3DTnLHalDevice) ? "T&L HAL (hardware)" :
+                       IsEqualGUID(g, IID_IDirect3DHALDevice) ? "HAL (hardware)" :
+                       IsEqualGUID(g, IID_IDirect3DRGBDevice) ? "RGB (software)" :
+                       IsEqualGUID(g, IID_IDirect3DRefDevice) ? "reference (software)" : "other";
+    DWORD op = d->dwTextureOpCaps, sb = d->dpcTriCaps.dwSrcBlendCaps, db = d->dpcTriCaps.dwDestBlendCaps;
+    logf("directx7:     3D device '%s' %s: texture ops 0x%lX (needs 0x5C: %s), source blends 0x%lX (needs 0x332: %s), "
+         "destination blends 0x%lX (needs 0x36: %s), device caps 0x%lX", name ? name : "?", kind,
+         op, (op & 0x5C) == 0x5C ? "ok" : "MISSING", sb, (sb & 0x332) == 0x332 ? "ok" : "MISSING",
+         db, (db & 0x36) == 0x36 ? "ok" : "MISSING", d->dwDevCaps);
+    return D3DENUMRET_OK;
+}
+static void log_directx7_report(void)
+{
+    HMODULE dd = LoadLibraryA("ddraw.dll");
+    typedef HRESULT (WINAPI *PFN_Enum)(LPDDENUMCALLBACKEXA, LPVOID, DWORD);
+    typedef HRESULT (WINAPI *PFN_Create)(GUID*, LPVOID*, REFIID, IUnknown*);
+    PFN_Enum   enumEx = dd ? (PFN_Enum)GetProcAddress(dd, "DirectDrawEnumerateExA") : NULL;
+    PFN_Create create = dd ? (PFN_Create)GetProcAddress(dd, "DirectDrawCreateEx") : NULL;
+    if (!enumEx || !create) { logf("directx7: ddraw.dll not usable (%s)", dd ? "missing exports" : "not loaded"); return; }
+    static DdEnumList l; l.n = 0;
+    HRESULT hr = enumEx((LPDDENUMCALLBACKEXA)dx7_enum_cb, &l, 7);
+    logf("directx7: %d DirectDraw device(s) listed (enumerate hr 0x%08lX)", l.n, (unsigned long)hr);
+    for (int i = 0; i < l.n; ++i) {
+        DdEnumDev& e = l.d[i];
+        char mon[160] = "no monitor";
+        MONITORINFOEXA mi; mi.cbSize = sizeof(mi);
+        if (e.mon && GetMonitorInfoA(e.mon, &mi))
+            snprintf(mon, sizeof(mon), "%s %ldx%ld at %ld,%ld%s", mi.szDevice, mi.rcMonitor.right - mi.rcMonitor.left,
+                     mi.rcMonitor.bottom - mi.rcMonitor.top, mi.rcMonitor.left, mi.rcMonitor.top,
+                     (mi.dwFlags & MONITORINFOF_PRIMARY) ? " primary" : "");
+        logf("directx7: [%d] '%s' (%s)%s, %s", i + 1, e.desc, e.name, e.primary ? " = the primary display driver" : "", mon);
+        LPDIRECTDRAW7 ddr = NULL;
+        hr = create(e.primary ? NULL : &e.guid, (LPVOID*)&ddr, IID_IDirectDraw7, NULL);
+        if (FAILED(hr) || !ddr) { logf("directx7:     DirectDrawCreateEx FAILED (hr 0x%08lX)", (unsigned long)hr); continue; }
+        hr = ddr->SetCooperativeLevel(NULL, DDSCL_NORMAL);
+        if (FAILED(hr)) logf("directx7:     SetCooperativeLevel FAILED (hr 0x%08lX)", (unsigned long)hr);
+        DDDEVICEIDENTIFIER2 id; ZeroMemory(&id, sizeof(id));
+        hr = ddr->GetDeviceIdentifier(&id, 0);
+        if (SUCCEEDED(hr))
+            logf("directx7:     driver %s '%s', vendor %04lX device %04lX subsys %08lX rev %lu, version %u.%u.%u.%u, WHQL %lu",
+                 id.szDriver, id.szDescription, id.dwVendorId, id.dwDeviceId, id.dwSubSysId, id.dwRevision,
+                 HIWORD(id.liDriverVersion.HighPart), LOWORD(id.liDriverVersion.HighPart),
+                 HIWORD(id.liDriverVersion.LowPart), LOWORD(id.liDriverVersion.LowPart), id.dwWHQLLevel);
+        else logf("directx7:     GetDeviceIdentifier FAILED (hr 0x%08lX)", (unsigned long)hr);
+        DDCAPS caps; ZeroMemory(&caps, sizeof(caps)); caps.dwSize = sizeof(caps);
+        if (SUCCEEDED(ddr->GetCaps(&caps, NULL)))
+            logf("directx7:     video memory %lu MB, 3D acceleration flag %s", caps.dwVidMemTotal >> 20, (caps.dwCaps & DDCAPS_3D) ? "yes" : "NO");
+        LPDIRECT3D7 d3d = NULL;
+        hr = ddr->QueryInterface(IID_IDirect3D7, (LPVOID*)&d3d);
+        if (FAILED(hr) || !d3d) logf("directx7:     no Direct3D 7 interface (hr 0x%08lX)", (unsigned long)hr);
+        else {
+            int count = 0;
+            hr = d3d->EnumDevices(dx7_report_dev_cb, &count);
+            if (!count) logf("directx7:     Direct3D 7 lists NO 3D devices (hr 0x%08lX)", (unsigned long)hr);
+            d3d->Release();
+        }
+        ddr->Release();
+    }
 }
 
 static void log_pc_config(void)
@@ -184,6 +269,7 @@ static void log_pc_config(void)
         GetLocaleInfoEx(LOCALE_NAME_USER_DEFAULT, LOCALE_STIMEFORMAT, tf, 64);
         logf("region  : %ls (date %ls, time %ls, LCID 0x%04lX)", loc, sd, tf, (unsigned long)GetUserDefaultLCID());
     }
+    log_directx7_report();
 
     logf("---- end PC configuration ----");
 }
@@ -345,16 +431,99 @@ static void ensure_anark_prefs(void)
 // [Display] Renderer = auto probes OpenGL the way the front end does (a hidden window at 0,0,
 // pixel format #1's description, a real context) and picks OpenGL with hardware OpenGL 1.3+,
 // else Direct3D. opengl / directx force one.
-static bool is_teamracing_shell(const char* amPlayer)
+static DWORD shell_stamp(const char* amPlayer)          // AMPlayer.exe link stamp, 0 if unreadable
 {
     HANDLE f = CreateFileA(amPlayer, GENERIC_READ, FILE_SHARE_READ, NULL, OPEN_EXISTING, 0, NULL);
-    if (f == INVALID_HANDLE_VALUE) return false;
+    if (f == INVALID_HANDLE_VALUE) return 0;
     BYTE h[1024]; DWORD got = 0;
     BOOL ok = ReadFile(f, h, sizeof(h), &got, NULL);
     CloseHandle(f);
-    if (!ok || got < 0x40) return false;
+    if (!ok || got < 0x40) return 0;
     DWORD pe = *(DWORD*)(h + 0x3C);
-    return pe + 12 <= got && *(DWORD*)(h + pe + 8) == 0x47C34847;
+    return pe + 12 <= got ? *(DWORD*)(h + pe + 8) : 0;
+}
+
+static bool is_teamracing_shell(const char* amPlayer) { return shell_stamp(amPlayer) == 0x47C34847; }
+
+// NASCAR Racing 1.1's front end (Anark Client 3.0, stamp 0x46AFA277) offers Direct3D 7 only when a
+// D3D7 device of the screen's driver has texture ops ADD|MODULATE2X|MODULATE|SELECTARG2 (0x5C),
+// source blends 0x332 and destination blends 0x36 (AMPlayer sub_63B402DF over D3DDEVICEDESC7); when
+// no device passes it greys out Direct3D AND OpenGL and draws in software - at 2560x1600 a frozen
+// "Please Wait" with the music playing. This repeats that test on the primary display driver.
+static bool probe_opengl(char* what, size_t n);
+struct D3d7Probe { bool ok; char devs[300]; };
+static HRESULT CALLBACK d3d7_dev_cb(LPSTR desc, LPSTR name, LPD3DDEVICEDESC7 d, LPVOID p)
+{
+    D3d7Probe* r = (D3d7Probe*)p;
+    bool hw = IsEqualGUID(d->deviceGUID, IID_IDirect3DHALDevice) || IsEqualGUID(d->deviceGUID, IID_IDirect3DTnLHalDevice);
+    bool caps = (d->dwTextureOpCaps & 0x5C) == 0x5C && (d->dpcTriCaps.dwSrcBlendCaps & 0x332) == 0x332 &&
+                (d->dpcTriCaps.dwDestBlendCaps & 0x36) == 0x36;
+    if (hw && caps) r->ok = true;
+    size_t n = strlen(r->devs);
+    if (n < sizeof(r->devs) - 64)
+        snprintf(r->devs + n, sizeof(r->devs) - n, "%s%s (%s%s)", n ? ", " : "", name ? name : "?",
+                 hw ? "hardware" : "software", hw ? (caps ? ", passes" : ", lacks blend caps") : "");
+    return D3DENUMRET_OK;
+}
+
+static bool probe_d3d7(char* what, size_t n)
+{
+    snprintf(what, n, "no DirectX 7");
+    HMODULE dd = LoadLibraryA("ddraw.dll");
+    typedef HRESULT (WINAPI *PFN_Create)(GUID*, LPVOID*, REFIID, IUnknown*);
+    PFN_Create create = dd ? (PFN_Create)GetProcAddress(dd, "DirectDrawCreateEx") : NULL;
+    LPDIRECTDRAW7 ddraw = NULL; LPDIRECT3D7 d3d = NULL;
+    D3d7Probe r = { false, "" };
+    if (create && SUCCEEDED(create(NULL, (LPVOID*)&ddraw, IID_IDirectDraw7, NULL)) && ddraw) {
+        ddraw->SetCooperativeLevel(NULL, DDSCL_NORMAL);
+        if (SUCCEEDED(ddraw->QueryInterface(IID_IDirect3D7, (LPVOID*)&d3d)) && d3d) {
+            d3d->EnumDevices(d3d7_dev_cb, &r);
+            snprintf(what, n, "DirectX 7 devices: %s", r.devs[0] ? r.devs : "none");
+            d3d->Release();
+        } else snprintf(what, n, "no Direct3D 7 on the primary display driver");
+        ddraw->Release();
+    }
+    return r.ok;
+}
+
+// NASCAR Racing 1.1: [Display] Renderer = auto keeps Direct3D 7 wherever the game's own test passes
+// (unchanged); where it fails, OpenGL with hardware OpenGL 1.3+ (a saved ClientRenderer is used
+// without the game's test). opengl / directx force one. HKCU\Software\Anark\Client\3.0\Preferences.
+static void choose_classic_renderer(const char* amPlayer)
+{
+    if (shell_stamp(amPlayer) != 0x46AFA277) return;
+    std::string want = ini_str("Display", "Renderer", "auto");
+    for (size_t i = 0; i < want.size(); i++) want[i] = (char)tolower((unsigned char)want[i]);
+    char d3d[320] = "", gl[256] = "";
+    int r;                                         // 3 Direct3D, 2 OpenGL, 0 = leave it to the game
+    if (want == "directx") r = 3;
+    else if (want == "opengl") r = 2;
+    else {
+        if (want != "auto") logf("renderer: [Display] Renderer = '%s' is not auto, opengl or directx - using auto", want.c_str());
+        bool dx = probe_d3d7(d3d, sizeof(d3d));
+        r = dx ? 0 : probe_opengl(gl, sizeof(gl)) ? 2 : 0;
+    }
+    HKEY k;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Anark\\Client\\3.0\\Preferences", 0, NULL, 0,
+                        KEY_SET_VALUE, NULL, &k, NULL) == ERROR_SUCCESS) {
+        if (r) {
+            DWORD v = (DWORD)r;
+            RegSetValueExA(k, "ClientRenderer", 0, REG_DWORD, (const BYTE*)&v, sizeof(v));
+            RegSetValueExA(k, "DisableGL", 0, REG_SZ, (const BYTE*)(r == 2 ? "0" : "1"), 2);
+        } else {                                   // the game decides, as on the cabinet
+            RegDeleteValueA(k, "ClientRenderer");
+            RegSetValueExA(k, "DisableGL", 0, REG_SZ, (const BYTE*)"1", 2);
+        }
+        RegCloseKey(k);
+    }
+    if (want == "directx" || want == "opengl")
+        logf("renderer: %s (set in [Display] Renderer)", r == 2 ? "OpenGL" : "Direct3D 7");
+    else if (r == 2)
+        logf("renderer: OpenGL (%s) - this PC fails the game's Direct3D 7 test (%s)", gl, d3d);
+    else if (d3d[0] && strstr(d3d, "passes"))
+        logf("renderer: Direct3D 7, as on the cabinet (%s)", d3d);
+    else
+        logf("renderer: WARNING - neither Direct3D 7 (%s) nor hardware OpenGL (%s): the game draws in software (very slow)", d3d, gl);
 }
 
 static bool probe_opengl(char* what, size_t n)
@@ -1030,6 +1199,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     snprintf(gameExe,  sizeof(gameExe),  "%s\\NASCAR_GVR.exe", gameDir);
 
     choose_teamracing_renderer(amPlayer);
+    choose_classic_renderer(amPlayer);
     const bool diag = ini_bool("Debug", "Log", false);
     if (diag) debug_capture_start();
 
