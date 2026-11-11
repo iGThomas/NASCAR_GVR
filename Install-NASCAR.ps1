@@ -31,6 +31,20 @@ function Find-GameDisc {
     return $null
 }
 
+# A click into this console window starts "select text" mode, and Windows then PAUSES the install
+# until the selection ends - it looked hung (2026-11-11). Switch that mode off for this window.
+try {
+    if (-not ("GvrConsoleMode" -as [type])) {
+        Add-Type -Name GvrConsoleMode -Namespace "" -MemberDefinition @'
+[DllImport("kernel32.dll")] public static extern IntPtr GetStdHandle(int n);
+[DllImport("kernel32.dll")] public static extern bool GetConsoleMode(IntPtr h, out uint m);
+[DllImport("kernel32.dll")] public static extern bool SetConsoleMode(IntPtr h, uint m);
+'@
+    }
+    $cin = [GvrConsoleMode]::GetStdHandle(-10); $cm = 0
+    if ([GvrConsoleMode]::GetConsoleMode($cin, [ref]$cm)) { [void][GvrConsoleMode]::SetConsoleMode($cin, ($cm -bor 0x80) -band (-bnot 0x40)) }
+} catch { }
+
 $noGui = @($args | Where-Object { "$_" -ieq "-NoGui" }).Count -gt 0
 if ($Game -and !$scripts.ContainsKey($Game)) { Write-Host "-Game must be 1.1 or 2.0 (got '$Game')." -ForegroundColor Red; exit 1 }
 

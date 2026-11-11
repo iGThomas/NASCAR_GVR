@@ -28,33 +28,44 @@ Your PC stays a normal PC: no shell replacement, no autostart, no reboot.
 
 **Steps:**
 
-1. Download the latest **`NASCAR-GVR-<version>.zip`** from the
-   [Releases](../../releases/latest) page and unzip it (right-click → **Extract All**).
+1. Download **`NASCAR-GVR-<version>-Setup.exe`** from the [Releases](../../releases/latest) page.
 2. Mount the game ISO (right-click it → **Mount**) or insert the disc.
-3. Double-click **`Install.bat`** in the unzipped folder and click **Yes** when Windows asks
-   for administrator rights. (If Windows asks "Do you want to run this file?", click **Run**.)
+3. Double-click the Setup file and click **Yes** when Windows asks for administrator rights.
+   Setup is not signed, so Windows may first show "Windows protected your PC": click
+   **More info** → **Run anyway**.
 4. Choose the game: **NASCAR Racing** or **NASCAR Team Racing**. A mounted disc is recognised
    and already highlighted.
 5. Pick where to install (for example `C:\Games` - a `NASCAR_GVR_1.1` or `NASCAR_GVR_2.0` folder
    is created inside it). The installer finds the mounted disc by itself, applies every fix and
-   installs .NET 1.1 if it is missing. It takes a few minutes and tells you when it is done.
+   unpacks the .NET 1.1 the menus need into the game folder (nothing of it is installed into
+   Windows). It takes a few minutes and tells you when it is done.
 6. Start **NASCAR Racing** or **NASCAR Team Racing** from the desktop shortcut.
 
-Both games can be installed side by side: run `Install.bat` again and choose the other one.
+Both games can be installed side by side: run Setup again and choose the other one.
+
+**Zip instead of Setup:** the same release is also offered as **`NASCAR-GVR-<version>.zip`**
+(for example when an antivirus blocks Setup). Unzip it (right-click → **Extract All**) and
+double-click **`Install.bat`**; everything else is the same.
 
 > **Antivirus warning?** Add the install folder as an exclusion (Windows Security → Virus & threat
 > protection → Manage settings → Exclusions → Add a folder), and restore `GvrIO.dll` if it was
-> quarantined (if `NascarLaunch.exe` vanished, unzip again and re-run `Install.bat`). This is a false alarm: to run an arcade game on a normal PC, our small DLLs step in
+> quarantined (if `NascarLaunch.exe` vanished, run Setup again). This is a false alarm: to run an arcade game on a normal PC, small DLLs step in
 > between the game and Windows, and antivirus programs flag that kind of behaviour by default.
 
-**Updating:** download the newest release, unzip it, run `Install.bat`, choose the game and pick
-its existing install folder (e.g. `C:\Games\NASCAR_GVR_1.1`). It updates in place - no game disc needed, your settings
+**Updating:** download the newest Setup, run it and choose the game. It finds the existing
+install by itself (including installs made with older versions) and asks "Update it now?".
+It updates in place - no game disc needed, your settings
 are kept (new settings are added), and it works even if you skipped releases. The installer only
 ever touches a folder it installed itself (marked by `gvr-install.ini`); folders of other games,
 other GVR titles or other NASCAR editions are never changed.
 Your leaderboards, stats and operator settings (`GVR\GvrPlus\game.db`), your settings, pedal
 calibration and race saves are always kept, and copied to `Backup\` in the game folder before
 every install or update.
+
+**Removing:** Windows Settings → Apps (or Control Panel → Programs and Features) →
+**NASCAR Racing (GlobalVR arcade)** or **NASCAR Team Racing (GlobalVR arcade)** → Uninstall.
+It asks first, copies your leaderboards, settings, calibration and race saves to
+`Documents\NASCAR_GVR Backup`, then removes the game folder, its shortcuts and its entry.
 
 Screen size, fullscreen and the controller map are in `nascar_settings.ini` in the install
 folder. Advanced: the installer still takes command-line options, e.g.
@@ -175,7 +186,7 @@ The install log is in `%TEMP%\NASCAR_GVR_Install\install.log`. If the race will 
 | `Deploy\`, `Deploy-2.0.2\` | the SQLite database layer and the prepared `game.db`, per game |
 | `src\` | source for our DLLs and the launcher (see below) |
 | `Tools\` | the disc extractor (`unshield.exe`) and the research tools |
-| `Dependencies\` | .NET 1.1 + SP1 installers, DXVK |
+| `Dependencies\` | Microsoft's .NET 1.1 + SP1 packages (unpacked into the game folder at install time), DXVK |
 | `docs\findings\` | everything we learned |
 
 **Source (`src\`):**
@@ -186,11 +197,14 @@ The install log is in `%TEMP%\NASCAR_GVR_Install\install.log`. If the race will 
   the windows well-behaved.
 - `GvrSqlite` — the SQLite provider the database layer uses.
 - `GvrDongleEmu` — a software dongle back end (research; not installed).
+- `Setup` — `Setup.exe`, the one-file download: unpacks the release package it carries to a fresh
+  temporary folder, runs `Install-NASCAR.ps1` and removes the folder again.
 
 The prebuilt binaries are included. To rebuild them you need Visual Studio (C++ desktop
 workload): run `build.cmd` in each `src\` folder. To make a release download, run
 `Tools\Make-Release.ps1 -Version <x.y.z>`: it packs only what the two installers need into
-`dist\NASCAR-GVR-<x.y.z>.zip`, which is then uploaded to a GitHub Release.
+`dist\NASCAR-GVR-<x.y.z>.zip` and adds the same package to `Setup.exe` as
+`dist\NASCAR-GVR-<x.y.z>-Setup.exe`; both are uploaded to a GitHub Release.
 `Tools\Make-BytePatches.py` / `Make-BytePatches-202.py` regenerate `Patches\nascar-bytepatches.txt`
 / `nascar-202-bytepatches.txt` from an original and a patched install.
 

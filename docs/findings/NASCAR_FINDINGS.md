@@ -1480,3 +1480,41 @@ the menus stay black. Reproduced by removing every `GVR` source key; fixed by re
 (`HKLM\SYSTEM\CurrentControlSet\Services\EventLog\Application\GVR`, `EventMessageFile` =
 .NET 1.1's `EventLogMessages.dll`), which the installer does. NASCAR Racing 1.1 does not take this
 path.
+
+## 19. .NET 1.1 inside the install folder (2026-11-11)
+
+Both front ends are native `AMPlayer.exe` hosts whose plug-ins (PLUSDE and the Plus layer) load
+CLR 1.1. Installing .NET 1.1 into Windows kept failing on players' PCs: a damaged install hung the
+front end with no window, the plain redist stops with MSI 1603 on Windows 10/11, and the SP1
+package (`NDP1.1sp1-KB867460-X86.exe`) is itself a .NET 1.x program - on a PC without any older
+.NET it cannot even unpack (`0x80131700`, failed to load the runtime).
+
+Windows' own `mscoree.dll` (the .NET 4 shim) still honours `COMPLUS_InstallRoot` and
+`COMPLUS_Version`. With `COMPLUS_InstallRoot=<install>\Runtime` and `COMPLUS_Version=v1.1.4322`
+the front end loads `<install>\Runtime\v1.1.4322\mscorwks.dll` and nothing of .NET 1.1 has to be in
+Windows. There is no global assembly cache then, so the framework assemblies the front end binds
+(`System`, `System.Data`, `System.Xml`, ...) must sit next to `AMPlayer.exe`; a missing one stops
+the front end at a binding-error box. Verified on a Windows 10 with no .NET 1.1: both front ends
+reach their menus (NASCAR Racing: attract, track select; Team Racing: driver select) and the shim
+logs `CLR loaded: ...\Runtime\v1.1.4322\mscorwks.dll`. The race (`NASCAR_GVR.exe`) is native and
+loads no CLR.
+
+The runtime is built at install time from the two Microsoft packages in `Dependencies\DotNet11`,
+without running either installer:
+
+1. `dotnetfx.exe /q /c /t:<dir>` unpacks `netfx.msi`; `msiexec /a` makes a file image of it
+   (installs nothing). The runtime is the image's `Framework\URTInstallPath` folder (1.1.4322.573).
+2. The SP1 package embeds three Microsoft cabinets (`MSCF` header, size at +8). The largest holds
+   every updated file whole (74 files, 1.1.4322.2032), named after its Windows Installer file key:
+   `FL_System_Data_dll_____X86.<GUID>`, `mscorwks_dll_4_____X86.<GUID>`, keys cut at 72 characters.
+   `expand.exe` unpacks it; each file replaces the runtime file whose name reads the same with "."
+   as "_" (a trailing `_<n>` dropped, a cut key matched by its unique prefix).
+3. `gdiplus.dll` is removed (a real install leaves it out; Windows has its own).
+
+Compared file by file with a real SP1 install, the result differs only in files the game does not
+use: `gacutil.exe`, `netfxupdate.exe`, `Updates\hotfix.exe`, two ASP.NET SQL templates, and the
+`CONFIG\security.config` / `enterprisesec.config` files .NET writes on first use.
+
+The launcher sets the two variables only when `<install>\Runtime\v1.1.4322\mscorwks.dll` exists,
+so an install made before this change keeps using the .NET 1.1 in Windows. Team Racing's event
+source `GVR` (section 18) takes its messages from the private `EventLogMessages.dll`.

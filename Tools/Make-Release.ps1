@@ -4,7 +4,8 @@
   One zip for both games: NASCAR Racing (v1.1 disc) and NASCAR Team Racing (2.0.2 disc).
   Install.bat runs Install-NASCAR.ps1, which asks which game and runs its installer. Packs ONLY
   what the installers read at install time, in the same folder layout, into
-  dist\NASCAR-GVR-<Version>.zip. Upload that zip as the release asset.
+  dist\NASCAR-GVR-<Version>.zip, and the same package as one file, dist\NASCAR-GVR-<Version>-Setup.exe
+  (src\Setup). Upload both as release assets.
 
     .\Tools\Make-Release.ps1 -Version 1.2.0
 #>
@@ -57,11 +58,16 @@ Installs either game (or both, side by side):
 
 1. Mount the game disc ISO (right-click it, Mount), or insert the disc.
 2. Double-click Install.bat in this folder and allow administrator rights.
+   (The Setup.exe download does the same in one file.)
 3. Choose the game (a mounted disc is already selected), then pick where to
    install. When it says it is done, start the game from its desktop shortcut.
 
-Updating: double-click Install.bat, choose the game and pick its existing install
-folder - no disc needed; scores, settings and pedal calibration are kept.
+Updating: run the new version the same way and choose the game - an existing
+install is found and offered for update. No disc needed; scores, settings and
+pedal calibration are kept.
+
+Removing: Windows Settings > Apps (or Programs and Features) > the game > Uninstall.
+Scores, settings and calibration are copied to Documents\NASCAR_GVR Backup first.
 
 Settings: nascar_settings.ini in the install folder.
 Problems: set [Debug] Log=true in nascar_settings.ini, reproduce the problem once,
@@ -82,3 +88,18 @@ try {
 } finally { $archive.Dispose() }
 Remove-Item -Recurse -Force $stage
 "{0}  ({1:N1} MB)" -f $zip, ((Get-Item $zip).Length / 1MB)
+
+# The one-file download: src\Setup\build\Setup.exe + the zip + a 16-byte trailer (the zip's offset,
+# 8 bytes little endian, then "NGVRSFX1"). Setup.exe unpacks it to %TEMP% and runs Install-NASCAR.ps1.
+$stub = Join-Path $repo "src\Setup\build\Setup.exe"
+if (!(Test-Path $stub)) { throw "missing: src\Setup\build\Setup.exe (run src\Setup\build.cmd)" }
+$setup = Join-Path $repo "dist\$name-Setup.exe"
+$s = [IO.File]::ReadAllBytes($stub)
+$fs = [IO.File]::Create($setup)
+try {
+    $fs.Write($s, 0, $s.Length)
+    $z = [IO.File]::OpenRead($zip); try { $z.CopyTo($fs) } finally { $z.Close() }
+    $t = [BitConverter]::GetBytes([long]$s.Length) + [Text.Encoding]::ASCII.GetBytes("NGVRSFX1")
+    $fs.Write($t, 0, $t.Length)
+} finally { $fs.Close() }
+"{0}  ({1:N1} MB)" -f $setup, ((Get-Item $setup).Length / 1MB)

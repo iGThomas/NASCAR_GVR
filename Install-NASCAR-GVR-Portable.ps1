@@ -32,7 +32,7 @@ param(
     [switch]$SkipGvrTools,
     [switch]$SkipFonts,
     [switch]$SkipDotNet,
-    [switch]$RepairDotNet,   # remove .NET 1.1 and install it clean even if it seems to work
+    [switch]$RepairDotNet,   # unpack the private .NET 1.1 (<install>\Runtime) again even if it works
     [switch]$InstallDirectX,
     [switch]$Dxvk,
     [switch]$InstallHercules,
@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-11-02-nascar-portable-4.20" # 4.20: release v1.2.1-beta.4 - [Display] Renderer now also chooses the NASCAR Racing menus' renderer: auto keeps Direct3D 7 where the game's own test passes and uses OpenGL where it fails (there the game greyed out both and drew in software: a frozen "Please Wait"); with [Debug] Log=true the PC's full DirectX 7 picture and the game's own renderer verdict are logged (rebuilt NascarLaunch.exe, GvrIO.dll). 4.19: release v1.2.1-beta.3 - rebuilt NascarLaunch.exe (Team Racing event-source check; no change for NASCAR Racing). 4.18: release v1.2.1-beta.2 - with [Debug] Log=true the LOG folder also gets the menus' and the race's own messages (debug-output.log), the race engine's traces, Windows' crash records for the game, overlay / hook DLLs loaded into the game and the GPU the menus draw with (rebuilt NascarLaunch.exe, GvrIO.dll). 4.17: release v1.2.1-beta.1 - a generic USB H-shifter is recognised from two held gears and remembered (nascar_calibration.ini [Shifter]), a direct-drive base held by another program is still read for steering, the transmission screen follows a PC wheel found late, the front end never loads NASCAR Team Racing's AKLog2 stand-in, no crash on closing the front end, DirectX device list limited to attached displays and logged (rebuilt GvrIO.dll, NascarLaunch.exe: screens in the PC log). 4.16: release v1.2.0 (NASCAR Racing 1.1.1; one zip with NASCAR Team Racing - Install.bat asks which game) - runs on any Windows region format (the attract never loaded on day/month Windows; the shell now runs as en-US), the game can never restart the PC (nightly restart check patched off in NASCARPlugIn.dll + restart calls blocked), race display modes up to 16384 pixels (5120x1440), wheels with pedals / a gear shifter / a separate rim or button boxes on their own USB cables, set up automatically (pedals and shifter type learned from use, PC pedals calibrated on the arcade's own screen and saved in nascar_calibration.ini (kept as player data); [Wheel] overrides), database password masked in the log, region format in the launcher log (rebuilt GvrIO.dll, NascarLaunch.exe, GvrSqlite.dll). 4.15: default folder NASCAR_GVR_1.1 and desktop/start shortcut "NASCAR Racing" (was "NASCAR Team Racing") so the 1.1 and 2.0.2 editions install side by side without clashing; the old shortcut is migrated on install and uninstall. 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
+$Version = "2026-11-11-nascar-portable-4.21" # 4.21: release v1.2.1 - an existing install is found and offered for update (Programs and Features entry, shortcuts, usual folders); each install gets a Programs and Features entry with a working Uninstall (asks first, keeps the player data in Documents; uninstaller copy in <install>\Setup); the script asks Windows for administrator rights itself; the one-file NASCAR-GVR-<version>-Setup.exe runs it. .NET 1.1 is no longer installed into Windows: the installer unpacks .NET 1.1 SP1 into <install>\Runtime (and its libraries next to AMPlayer.exe), run-tests it there, and NascarLaunch.exe starts the menus on that private copy (rebuilt NascarLaunch.exe). Fixes clean PCs where the SP1 package could not even unpack (it needs an older .NET to run) and PCs whose Windows .NET 1.1 was damaged; -RepairDotNet now unpacks the private copy again. 4.20: release v1.2.1-beta.4 - [Display] Renderer now also chooses the NASCAR Racing menus' renderer: auto keeps Direct3D 7 where the game's own test passes and uses OpenGL where it fails (there the game greyed out both and drew in software: a frozen "Please Wait"); with [Debug] Log=true the PC's full DirectX 7 picture and the game's own renderer verdict are logged (rebuilt NascarLaunch.exe, GvrIO.dll). 4.19: release v1.2.1-beta.3 - rebuilt NascarLaunch.exe (Team Racing event-source check; no change for NASCAR Racing). 4.18: release v1.2.1-beta.2 - with [Debug] Log=true the LOG folder also gets the menus' and the race's own messages (debug-output.log), the race engine's traces, Windows' crash records for the game, overlay / hook DLLs loaded into the game and the GPU the menus draw with (rebuilt NascarLaunch.exe, GvrIO.dll). 4.17: release v1.2.1-beta.1 - a generic USB H-shifter is recognised from two held gears and remembered (nascar_calibration.ini [Shifter]), a direct-drive base held by another program is still read for steering, the transmission screen follows a PC wheel found late, the front end never loads NASCAR Team Racing's AKLog2 stand-in, no crash on closing the front end, DirectX device list limited to attached displays and logged (rebuilt GvrIO.dll, NascarLaunch.exe: screens in the PC log). 4.16: release v1.2.0 (NASCAR Racing 1.1.1; one zip with NASCAR Team Racing - Install.bat asks which game) - runs on any Windows region format (the attract never loaded on day/month Windows; the shell now runs as en-US), the game can never restart the PC (nightly restart check patched off in NASCARPlugIn.dll + restart calls blocked), race display modes up to 16384 pixels (5120x1440), wheels with pedals / a gear shifter / a separate rim or button boxes on their own USB cables, set up automatically (pedals and shifter type learned from use, PC pedals calibrated on the arcade's own screen and saved in nascar_calibration.ini (kept as player data); [Wheel] overrides), database password masked in the log, region format in the launcher log (rebuilt GvrIO.dll, NascarLaunch.exe, GvrSqlite.dll). 4.15: default folder NASCAR_GVR_1.1 and desktop/start shortcut "NASCAR Racing" (was "NASCAR Team Racing") so the 1.1 and 2.0.2 editions install side by side without clashing; the old shortcut is migrated on install and uninstall. 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -190,7 +190,7 @@ function Get-InstallKind($root) {
         return "other:a different NASCAR_GVR.exe"
     }
     # a stopped earlier install: nothing but our own top-level names
-    $ours = @("Game", "Shell", "GVR", "LOG", "Fonts", "NascarLaunch.exe", "nascar_settings.ini",
+    $ours = @("Game", "Shell", "GVR", "LOG", "Fonts", "Runtime", "Setup", "Backup", "NascarLaunch.exe", "nascar_settings.ini",
               "nascar_registry.ini", "nascar_calibration.ini", "NASCAR_GVR.ico", $MarkerName)
     $strangers = @($items | Where-Object { $ours -notcontains $_.Name })
     if ($ourFile -and $strangers.Count -eq 0) { return "ours-partial" }
@@ -214,6 +214,7 @@ function Write-InstallMarker($root) {
             "[Install]" + $nl +
             "Product=$Product" + $nl + "Edition=$Edition" + $nl +
             "Installer=$Version" + $nl +
+            "Package=" + (Get-PackageVersion) + $nl +
             "FirstInstalled=$first" + $nl +
             "Updated=" + (Get-Date).ToString("yyyy-MM-dd HH:mm") + $nl
     [IO.File]::WriteAllText((Join-Path $root $MarkerName), $text)
@@ -228,6 +229,115 @@ function Test-OurShortcut($lnk, $root) {
         if (!$t -or !(Test-Path -LiteralPath $t)) { return $true }
         return $t.StartsWith($root.TrimEnd('\') + '\', [StringComparison]::OrdinalIgnoreCase)
     } catch { return $false }
+}
+
+# ---- existing installs, Programs and Features, uninstall ----------------------------------------
+# Updating must take no searching: the installer finds this edition's existing installs itself - the
+# Programs and Features entries it writes (since v1.2.1), the desktop / Start-menu shortcuts and the
+# usual folders (<drive>:\Games\<FolderLeaf> or NASCAR_GVR) - and offers to update the one it finds.
+# Only folders Get-InstallKind proves to be this product and edition count.
+# Each install gets its own Programs and Features entry (key NASCAR_GVR_<edition>_<folder tag>) with a
+# working Uninstall: a copy of this script in <install>\Setup, run with -Uninstall; it asks first,
+# copies the player's data to Documents and removes the folder, its shortcuts and its entry.
+$UninstallKeyBase = "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall"
+# entries are written to the 64-bit view; the 32-bit one is searched too (a 32-bit PowerShell writes
+# there - the first Setup.exe build started that one) so an install is never listed twice
+$UninstallKeyViews = @($UninstallKeyBase, "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall")
+$UninstallPrefix  = "NASCAR_GVR_$Edition"
+$SetupDirName     = "Setup"
+$DisplayTitle     = "$ShortcutName (GlobalVR arcade)"
+
+function Get-PathTag($root) {
+    $b = [Text.Encoding]::UTF8.GetBytes($root.TrimEnd('\').ToLowerInvariant())
+    return ([BitConverter]::ToString([Security.Cryptography.SHA256]::Create().ComputeHash($b), 0, 4)).Replace("-", "")
+}
+
+function Find-ExistingInstalls {
+    $cand = New-Object System.Collections.ArrayList
+    foreach ($k in @(Get-ChildItem $UninstallKeyViews -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like "$UninstallPrefix*" })) {
+        $loc = (Get-ItemProperty -Path $k.PSPath -ErrorAction SilentlyContinue).InstallLocation
+        if ($loc) { [void]$cand.Add($loc) }
+    }
+    $wsh = $null; try { $wsh = New-Object -ComObject WScript.Shell } catch {}
+    foreach ($dir in @([Environment]::GetFolderPath("Desktop"), [Environment]::GetFolderPath("CommonDesktopDirectory"),
+                       [Environment]::GetFolderPath("Programs"), [Environment]::GetFolderPath("CommonPrograms"))) {
+        foreach ($n in @(@($ShortcutName, $LegacyShortcutName) | Select-Object -Unique)) {
+            $l = Join-Path $dir "$n.lnk"
+            if (!$wsh -or !(Test-Path -LiteralPath $l)) { continue }
+            try { $t = $wsh.CreateShortcut($l).TargetPath; if ($t) { [void]$cand.Add((Split-Path -Parent $t)) } } catch {}
+        }
+    }
+    foreach ($d in [IO.DriveInfo]::GetDrives()) {
+        if ($d.DriveType -ne "Fixed" -or !$d.IsReady) { continue }
+        foreach ($leaf in @($FolderLeaf, "NASCAR_GVR")) { [void]$cand.Add((Join-Path $d.RootDirectory.FullName "Games\$leaf")) }
+    }
+    $seen = @{}
+    foreach ($c in $cand) {
+        $r = ([string]$c).TrimEnd('\')
+        if (!$r -or $seen.ContainsKey($r.ToLowerInvariant())) { continue }
+        $seen[$r.ToLowerInvariant()] = $true
+        if (!(Test-Path -LiteralPath $r -PathType Container)) { continue }
+        if (@("ours", "ours-legacy") -contains (Get-InstallKind $r)) { $r }
+    }
+}
+
+function Ask-YesNo($text) {
+    if (!(Test-CanShowDialogs)) { return $null }
+    $owner = New-DialogOwner
+    try { return ([System.Windows.Forms.MessageBox]::Show($owner, $text, "$ShortcutName installer", "YesNo", "Question") -eq "Yes") }
+    finally { $owner.Close() }
+}
+
+# The release number of the package this script came from (Make-Release writes it into README.txt).
+function Get-PackageVersion {
+    $r = Join-Path $SourceRoot "README.txt"
+    if (Test-Path -LiteralPath $r) {
+        $l = Get-Content -LiteralPath $r -TotalCount 1
+        if ($l -match '^NASCAR GVR (\S+)') { return $Matches[1] }
+    }
+    if ($InstallRoot) { $m = Read-InstallMarker $InstallRoot; if ($m -and $m["Package"]) { return $m["Package"] } }
+    return ($Version -replace '^.*-portable-', 'installer ')
+}
+
+function Register-Uninstall($root) {
+    if ($DryRun) { Log "would add '$DisplayTitle' to Programs and Features"; return }
+    $setup = Join-Path $root $SetupDirName
+    New-Dir $setup
+    $dst = Join-Path $setup (Split-Path -Leaf $PSCommandPath)
+    if ($PSCommandPath -ne $dst) { Copy-Item -LiteralPath $PSCommandPath -Destination $dst -Force }
+    $key = Join-Path $UninstallKeyBase ($UninstallPrefix + "_" + (Get-PathTag $root))
+    if (!(Test-Path $key)) { New-Item -Path $key -Force | Out-Null }
+    $ps = Join-Path $env:windir "System32\WindowsPowerShell\v1.0\powershell.exe"
+    $ver = Get-PackageVersion
+    $kb = [int](((Get-ChildItem -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { !$_.PSIsContainer } | Measure-Object Length -Sum).Sum) / 1KB)
+    $text = [ordered]@{
+        DisplayName     = $DisplayTitle
+        DisplayVersion  = $ver
+        Publisher       = "NASCAR GVR project"
+        InstallLocation = $root
+        DisplayIcon     = (Join-Path $root "NASCAR_GVR.ico")
+        UninstallString = "`"$ps`" -NoProfile -STA -ExecutionPolicy Bypass -File `"$dst`" -Uninstall -ForceOverwrite -InstallRoot `"$root`""
+        URLInfoAbout    = "https://github.com/iGThomas/NASCAR_GVR"
+        HelpLink        = "https://github.com/iGThomas/NASCAR_GVR/issues"
+        Comments        = "Installer $Version"
+        InstallDate     = (Get-Date).ToString("yyyyMMdd")
+    }
+    foreach ($n in $text.Keys) { New-ItemProperty -Path $key -Name $n -Value $text[$n] -PropertyType String -Force | Out-Null }
+    foreach ($n in "NoModify", "NoRepair") { New-ItemProperty -Path $key -Name $n -Value 1 -PropertyType DWord -Force | Out-Null }
+    New-ItemProperty -Path $key -Name EstimatedSize -Value $kb -PropertyType DWord -Force | Out-Null
+    Unregister-Uninstall $root (Get-Item $key).Name          # an older duplicate for this folder
+    Log "Programs and Features: '$DisplayTitle' $ver ($([int]($kb / 1024)) MB), Uninstall runs $dst"
+}
+
+function Unregister-Uninstall($root, $except = "") {
+    foreach ($k in @(Get-ChildItem $UninstallKeyViews -ErrorAction SilentlyContinue | Where-Object { $_.PSChildName -like "$UninstallPrefix*" })) {
+        $loc = (Get-ItemProperty -Path $k.PSPath -ErrorAction SilentlyContinue).InstallLocation
+        if ($except -and $k.Name -ieq $except) { continue }
+        if ($loc -and $loc.TrimEnd('\') -ieq $root.TrimEnd('\')) {
+            if ($DryRun) { Log "  would remove the Programs and Features entry $($k.PSChildName)" }
+            else { Remove-Item -Path $k.PSPath -Recurse -Force; Log "  removed the Programs and Features entry $($k.PSChildName)" }
+        }
+    }
 }
 
 # Settings merge on update: add every section / setting the new template has and the player's
@@ -884,18 +994,35 @@ function Resolve-Dependencies {
     return $null
 }
 
-# The shell + PLUSDE need REAL CLR 1.1. Do not redirect them to CLR 2.0: PLUSDE's
-# mixed-mode code uses native C++ exceptions as control flow and that EH interop
-# access-violates on 2.0. The plain 1.1 redist fails with
-# MSI 1603 on Windows 10/11 - the fix is slipstreaming SP1 into an admin image.
-# ---- .NET 1.1 crash dialogs must not stall the silent install ----------------------------------
-# During the .NET 1.1 MSI install, regsvcs.exe (COM+ registration for System.EnterpriseServices,
-# which the games do not use) can crash - seen on a fresh Windows 10 VM (2026-10-11). CLR 1.1
-# then shows its "Application has generated an exception that could not be handled" JIT-debug
-# dialog and waits for a click, so the silent install sits at "installing .NET 1.1". With
-# DbgJITDebugLaunchSetting = 1, CLR 1.1 ends a crashed process without asking. Set for the MSI
-# install only, in both registry views (CLR 1.1 is 32-bit: WOW6432Node on 64-bit Windows), and
-# put back afterwards - removed again where it did not exist. Returns whatever $Body outputs.
+# ---- .NET Framework 1.1: a private copy inside the install, nothing installed into Windows -------
+# The menus (AMPlayer.exe + PLUSDE) need the REAL CLR 1.1, never 2.0 or later: PLUSDE's mixed-mode
+# code uses native C++ exceptions as control flow and that interop access-violates on 2.0.
+# Until installer 4.20 / 1.4, .NET 1.1 was installed into Windows (SP1 slipstreamed into an admin
+# image - the plain redist fails with MSI 1603 on Windows 10/11). That kept failing on players' PCs
+# in ways only a clean reinstall fixed: a damaged 1.1 hung the menus with no window, a regsvcs.exe
+# crash dialog stalled the silent install, and the SP1 package's unpacker is itself a .NET 1.x
+# program, so on a PC with no older .NET it cannot run at all (0x80131700, seen on a clean
+# Windows 10, 2026-11-11). Since 4.21 / 1.5 the runtime is unpacked into <install>\Runtime\v1.1.4322
+# instead, and NascarLaunch.exe points the menus at it (COMPLUS_InstallRoot + COMPLUS_Version,
+# which Windows' own mscoree honours - verified on a Windows 10 with no .NET 1.1, both games):
+#   1. dotnetfx.exe /c /t: unpacks netfx.msi, msiexec /a turns it into a file image (installs nothing)
+#   2. the SP1 package carries every updated file whole in its largest embedded cabinet: Windows'
+#      expand.exe unpacks it and each file replaces the file it updates (-> 1.1.4322.2032)
+#   3. .NET's own libraries are copied next to AMPlayer.exe (a private runtime has no global
+#      assembly cache - a missing one stops the menus at a binding-error box), then a small 1.1
+#      program must compile and run on the result.
+# The result matches a real SP1 install file for file, apart from tools (gacutil, the updater) and
+# the security policy files .NET writes on first use. An existing private copy that passes the run
+# test is kept; one that fails is unpacked again (-RepairDotNet forces that). A .NET 1.1 already in
+# Windows is left alone and no longer used by the game.
+$PrivateNetVersion = "v1.1.4322"
+$PrivateNetBuild   = "1.1.4322.2032"   # SP1
+
+# During the run test CLR 1.1 must not show its "Application has generated an exception that could
+# not be handled" JIT-debug dialog and wait for a click (a crashed regsvcs.exe stalled the old silent
+# install that way, 2026-10-11): DbgJITDebugLaunchSetting = 1 ends a crashed process without asking.
+# Set in both registry views (CLR 1.1 is 32-bit: WOW6432Node on 64-bit Windows) and put back
+# afterwards - removed again where it did not exist. Returns whatever $Body outputs.
 function Invoke-QuietClrCrashes([scriptblock]$Body) {
     $keys = @("HKLM:\SOFTWARE\Microsoft\.NETFramework")
     if (Test-Path "HKLM:\SOFTWARE\WOW6432Node") { $keys += "HKLM:\SOFTWARE\WOW6432Node\Microsoft\.NETFramework" }
@@ -909,7 +1036,6 @@ function Invoke-QuietClrCrashes([scriptblock]$Body) {
             New-ItemProperty -Path $k -Name DbgJITDebugLaunchSetting -PropertyType DWord -Value 1 -Force | Out-Null
         } catch { Warn "could not set DbgJITDebugLaunchSetting in $k ($($_.Exception.Message))" }
     }
-    Log "  CLR crash dialogs off for the .NET install (DbgJITDebugLaunchSetting = 1)"
     try { & $Body }
     finally {
         foreach ($s in $saved) {
@@ -918,33 +1044,34 @@ function Invoke-QuietClrCrashes([scriptblock]$Body) {
                 else { New-ItemProperty -Path $s[0] -Name DbgJITDebugLaunchSetting -PropertyType DWord -Value $s[1] -Force | Out-Null }
             } catch {}
         }
-        Log "  CLR crash dialog setting restored"
     }
 }
-
-# ---- .NET Framework 1.1: present AND working, or reinstalled clean ----------------------------
-# A damaged 1.1 install makes the shell hang inside CLR startup with no window (2026-10-12: a
-# player's 1.1, left half-done by the regsvcs.exe crash dialog, was fixed by uninstall + clean
-# reinstall). So an existing 1.1 is not trusted by its files alone: a tiny 1.1 program doing what
-# the shell's .NET does first (culture + number/currency/date formatting, System.Data) must run and
-# exit within 30 s. If not, 1.1 is removed and installed clean. Everything this stage unpacks goes
-# into FRESH folders - nothing left in %TEMP% by an earlier, interrupted run is ever reused.
-$NetFx11ProductCode = "{CB2F7EDD-9D1F-43C1-90FC-4F52EAE172A1}"   # netfx.msi, every language edition
-$NetFx11Dir = Join-Path $env:WINDIR "Microsoft.NET\Framework\v1.1.4322"
 
 function Reset-Dir($p) {
     if (Test-Path -LiteralPath $p) { Remove-Item -LiteralPath $p -Recurse -Force -ErrorAction SilentlyContinue }
-    if (Test-Path -LiteralPath $p) { Fail "Could not clear the temporary folder $p - close any window using it and run Install.bat again." }
+    if (Test-Path -LiteralPath $p) { Fail "Could not clear the folder $p - close the game and any window using it, then run Install.bat again." }
     New-Item -ItemType Directory -Force $p | Out-Null
 }
 
-# $null when .NET 1.1 works, else the reason.
-function Test-DotNet11Works {
-    foreach ($f in "mscorlib.dll", "mscorwks.dll", "System.dll", "System.Data.dll", "csc.exe") {
-        if (!(Test-Path -LiteralPath (Join-Path $NetFx11Dir $f))) { return "$f is missing" }
+# Runs $Body with the private runtime selected the way NascarLaunch.exe selects it; restores the
+# two variables afterwards.
+function Invoke-WithPrivateNet($rt, [scriptblock]$Body) {
+    $old = @($env:COMPLUS_InstallRoot, $env:COMPLUS_Version)
+    $env:COMPLUS_InstallRoot = Split-Path -Parent $rt
+    $env:COMPLUS_Version = $PrivateNetVersion
+    try { & $Body }
+    finally {
+        if ($null -eq $old[0]) { Remove-Item env:COMPLUS_InstallRoot -ErrorAction SilentlyContinue } else { $env:COMPLUS_InstallRoot = $old[0] }
+        if ($null -eq $old[1]) { Remove-Item env:COMPLUS_Version -ErrorAction SilentlyContinue } else { $env:COMPLUS_Version = $old[1] }
     }
-    if (!(Test-Path (Join-Path $env:WINDIR "assembly\GAC\System\1.0.5000.0__b77a5c561934e089\System.dll"))) {
-        return "the 1.1 System assembly is missing from the global assembly cache"
+}
+
+# $null when the private runtime in $rt works, else the reason. A tiny 1.1 program doing what the
+# menus' .NET does first (culture + number/currency/date formatting, System.Data) must compile with
+# the runtime's own compiler and run on it within 30 s.
+function Test-PrivateDotNet($rt) {
+    foreach ($f in "mscorlib.dll", "mscorwks.dll", "System.dll", "System.Data.dll", "System.Xml.dll", "csc.exe") {
+        if (!(Test-Path -LiteralPath (Join-Path $rt $f))) { return "$f is missing" }
     }
     $t = Join-Path $LogDir "dotnet11_test"
     Reset-Dir $t
@@ -963,84 +1090,148 @@ class P {
     [IO.File]::WriteAllText((Join-Path $t "P.cs"), $src)
     [IO.File]::WriteAllText((Join-Path $t "P.exe.config"),
         '<?xml version="1.0"?><configuration><startup><requiredRuntime version="v1.1.4322" safemode="true"/><supportedRuntime version="v1.1.4322"/></startup></configuration>')
-    $csc = Join-Path $NetFx11Dir "csc.exe"
-    $p = Start-Process $csc -ArgumentList "/nologo /out:`"$t\P.exe`" /r:System.Data.dll `"$t\P.cs`"" -WorkingDirectory $t -WindowStyle Hidden -Wait -PassThru `
-                        -RedirectStandardOutput (Join-Path $t "csc.txt")
-    if ($p.ExitCode -ne 0 -or !(Test-Path (Join-Path $t "P.exe"))) { return "its C# compiler failed (exit $($p.ExitCode))" }
+    foreach ($f in "System.dll", "System.Data.dll", "System.Xml.dll") { Copy-Item -LiteralPath (Join-Path $rt $f) -Destination $t }   # no global assembly cache
     $out = Join-Path $t "out.txt"
-    $why = Invoke-QuietClrCrashes {
-        $q = Start-Process (Join-Path $t "P.exe") -WorkingDirectory $t -WindowStyle Hidden -PassThru -RedirectStandardOutput $out
-        $null = $q.Handle   # keep the handle: without it ExitCode is empty after WaitForExit(timeout)
-        if (!$q.WaitForExit(30000)) {
-            try { $q.Kill() } catch { }
-            "a .NET 1.1 test program hung (no exit within 30 s) - the same hang the shell shows"
+    return Invoke-WithPrivateNet $rt {
+        $p = Start-Process (Join-Path $rt "csc.exe") -ArgumentList "/nologo /out:`"$t\P.exe`" /r:System.Data.dll `"$t\P.cs`"" -WorkingDirectory $t `
+                           -WindowStyle Hidden -Wait -PassThru -RedirectStandardOutput (Join-Path $t "csc.txt")
+        if ($p.ExitCode -ne 0 -or !(Test-Path (Join-Path $t "P.exe"))) {
+            $msg = if (Test-Path (Join-Path $t "csc.txt")) { (Get-Content (Join-Path $t "csc.txt") | Select-Object -First 2) -join " " } else { "" }
+            return "its C# compiler failed (exit $($p.ExitCode)) $msg"
         }
-        elseif ($q.ExitCode -ne 42) { "a .NET 1.1 test program crashed (exit $($q.ExitCode))" }
+        $why = Invoke-QuietClrCrashes {
+            $q = Start-Process (Join-Path $t "P.exe") -WorkingDirectory $t -WindowStyle Hidden -PassThru -RedirectStandardOutput $out
+            $null = $q.Handle   # keep the handle: without it ExitCode is empty after WaitForExit(timeout)
+            if (!$q.WaitForExit(30000)) {
+                try { $q.Kill() } catch { }
+                "a .NET 1.1 test program hung (no exit within 30 s) - the same hang the menus would show"
+            }
+            elseif ($q.ExitCode -ne 42) { "a .NET 1.1 test program crashed (exit $($q.ExitCode))" }
+        }
+        if ($why) { return $why }
+        $line = if (Test-Path $out) { (Get-Content $out | Select-Object -First 1) } else { "" }
+        if ($line -notlike "1.1.4322*") { return "the test program did not run on .NET 1.1 (it reported '$line')" }
+        Log "  .NET 1.1 test: $line"
+        return $null
     }
-    if ($why) { return $why }
-    $line = if (Test-Path $out) { (Get-Content $out | Select-Object -First 1) } else { "" }
-    if ($line -notlike "1.1.4322*") { return "the test program did not run on .NET 1.1 (it reported '$line')" }
-    Log "  .NET 1.1 test: $line"
-    return $null
 }
 
-function Remove-DotNet11 {
-    Log "  removing the existing .NET 1.1 ($NetFx11ProductCode)"
-    $code = Invoke-QuietClrCrashes { (Start-Process msiexec -ArgumentList "/x $NetFx11ProductCode /qn /norestart" -Wait -PassThru).ExitCode }
-    if ($code -eq 1605) { Log "  (it was not registered with Windows Installer - installing over it)" }
-    elseif ($code -ne 0 -and $code -ne 3010) { Warn "  .NET 1.1 removal returned $code - installing over it anyway" }
-    else { Log "  removed" }
+# The SP1 package (NDP1.1sp1-KB867460-X86.exe) embeds three Microsoft cabinets ("MSCF" header,
+# cabinet size at +8); the largest holds the updated files. Writes it out and unpacks it into $dest.
+function Expand-Sp1Files($sp1, $work, $dest) {
+    $bytes = [IO.File]::ReadAllBytes($sp1)
+    $text = [Text.Encoding]::GetEncoding(28591).GetString($bytes)   # one char per byte
+    $best = $null; $at = 0
+    while (($i = $text.IndexOf("MSCF`0`0`0`0", $at, [StringComparison]::Ordinal)) -ge 0) {
+        $size = [BitConverter]::ToUInt32($bytes, $i + 8)
+        if ($i + $size -le $bytes.Length -and (!$best -or $size -gt $best[1])) { $best = @($i, [int]$size) }
+        $at = $i + 4
+    }
+    if (!$best) { Fail "The .NET 1.1 SP1 package has no cabinet inside - the file is damaged. Unzip the release again." }
+    $cab = Join-Path $work "sp1.cab"
+    $fs = [IO.File]::Create($cab); try { $fs.Write($bytes, $best[0], $best[1]) } finally { $fs.Close() }
+    $p = Start-Process (Join-Path $env:windir "System32\expand.exe") -ArgumentList "-F:* `"$cab`" `"$dest`"" -WindowStyle Hidden -Wait -PassThru
+    $n = @(Get-ChildItem -LiteralPath $dest -File).Count
+    if ($p.ExitCode -ne 0 -or $n -lt 50) { Fail ".NET 1.1 SP1 files could not be unpacked (expand.exe exit $($p.ExitCode), $n file(s))" }
+    Log ("  SP1: {0} updated file(s) unpacked ({1:N1} MB cabinet)" -f $n, ($best[1] / 1MB))
 }
 
-function Install-DotNet11($dfx, $sp1) {
-    Log "installing .NET 1.1 + SP1 (slipstreamed - required on Windows 10/11)"
-    $w = Join-Path $LogDir "dotnet11"; $adm = Join-Path $LogDir "dotnet11_admin"
-    Reset-Dir $w; Reset-Dir $adm                      # never an image left by an earlier run
-    $p = Start-Process $dfx -ArgumentList "/q /c /t:`"$w`"" -Wait -PassThru
-    if (!(Test-Path (Join-Path $w "netfx.msi"))) { Fail "dotnetfx.exe extraction failed ($($p.ExitCode))" }
-    $p = Start-Process $sp1 -ArgumentList "/Xp:`"$w\netfxsp.msp`"" -Wait -PassThru
-    if (!(Test-Path (Join-Path $w "netfxsp.msp"))) { Fail ".NET 1.1 SP1 extraction failed ($($p.ExitCode))" }
-    $p = Start-Process msiexec -ArgumentList "/a `"$w\netfx.msi`" TARGETDIR=`"$adm`" /qn" -Wait -PassThru
-    if (!(Test-Path (Join-Path $adm "netfx.msi"))) { Fail ".NET 1.1 admin image creation failed ($($p.ExitCode))" }
-    $p = Start-Process msiexec -ArgumentList "/a `"$adm\netfx.msi`" /p `"$w\netfxsp.msp`" /qn" -Wait -PassThru
-    if ($p.ExitCode -ne 0) { Fail ".NET 1.1 SP1 slipstream failed ($($p.ExitCode))" }
-    $code = Invoke-QuietClrCrashes { (Start-Process msiexec -ArgumentList "/i `"$adm\netfx.msi`" /qn /norestart" -Wait -PassThru).ExitCode }
-    if ($code -ne 0 -and $code -ne 3010) { Fail ".NET 1.1 SP1 install failed ($code)" }
-    Remove-Item -LiteralPath $w, $adm -Recurse -Force -ErrorAction SilentlyContinue
-    Log "  .NET 1.1 SP1 installed"
+# Each SP1 file is named after its Windows Installer file key - "FL_System_Data_dll_____X86.<GUID>",
+# "mscorwks_dll_4_____X86.<GUID>", keys cut at 72 characters - and replaces every runtime file whose
+# name reads the same with "." as "_". Files SP1 adds that the game never uses (mscoree.dll and
+# mscorier.dll of Windows' own folder, ASP.NET SQL templates) have no counterpart and are skipped.
+function Update-FromSp1($rt, $files) {
+    $byName = @{}
+    foreach ($f in Get-ChildItem -LiteralPath $rt -Recurse -File) {
+        $k = $f.Name.ToLowerInvariant().Replace('.', '_')
+        if (!$byName.ContainsKey($k)) { $byName[$k] = @() }
+        $byName[$k] += $f.FullName
+    }
+    $n = 0; $skipped = @()
+    foreach ($s in Get-ChildItem -LiteralPath $files -File) {
+        if ($s.Name -notmatch '^(?:FL_)?(?<stem>.+?)_{2,}(?:X86)?\.[0-9A-Fa-f]{8}_') { $skipped += $s.Name; continue }
+        $stem = $Matches.stem.ToLowerInvariant().Replace('.', '_')
+        $hits = $byName[$stem]
+        if (!$hits) { $hits = $byName[($stem -replace '_\d+$', '')] }
+        if (!$hits) { $k = @($byName.Keys | Where-Object { $_.StartsWith($stem) }); if ($k.Count -eq 1) { $hits = $byName[$k[0]] } }
+        if (!$hits) { $skipped += $s.Name; continue }
+        foreach ($h in $hits) { Copy-Item -LiteralPath $s.FullName -Destination $h -Force; $n++ }
+    }
+    Log "  SP1: $n runtime file(s) updated, $($skipped.Count) not used by the game skipped"
 }
 
-function Ensure-DotNet {
+# .NET's own libraries next to AMPlayer.exe. A file of the same name is replaced only when it is
+# .NET's (Microsoft's two framework key tokens), never when it belongs to the game.
+function Copy-FrameworkToShell($rt, $bin) {
+    $msKeys = @("B7-7A-5C-56-19-34-E0-89", "B0-3F-5F-7F-11-D5-0A-3A")
+    $n = 0; $kept = 0
+    foreach ($f in Get-ChildItem -LiteralPath $rt -Filter *.dll) {
+        if ($f.Name -ieq "mscorlib.dll") { continue }   # always loaded from the runtime folder itself
+        try { [void][Reflection.AssemblyName]::GetAssemblyName($f.FullName) } catch { continue }   # a native DLL
+        $dst = Join-Path $bin $f.Name
+        if (Test-Path -LiteralPath $dst) {
+            $tok = ""
+            try { $tok = [BitConverter]::ToString([Reflection.AssemblyName]::GetAssemblyName($dst).GetPublicKeyToken()) } catch {}
+            if ($msKeys -notcontains $tok) { $kept++; continue }
+            if ((Get-Item -LiteralPath $dst).Length -eq $f.Length -and (Get-Item -LiteralPath $dst).VersionInfo.FileVersion -eq $f.VersionInfo.FileVersion) { continue }
+        }
+        Copy-Item -LiteralPath $f.FullName -Destination $dst -Force; $n++
+    }
+    Log ("  .NET libraries next to AMPlayer.exe: $n copied" + $(if ($kept) { ", $kept game file(s) of the same name kept" } else { "" }))
+}
+
+function Install-PrivateDotNet($root, $shell) {
     if ($SkipDotNet -or $SkipShell) { return }
-    $present = Test-Path -LiteralPath (Join-Path $NetFx11Dir "mscorlib.dll")
-    if ($present -and !$RepairDotNet) {
-        if ($DryRun) { Log ".NET 1.1 present (dry run: not tested)"; return }
-        $why = Test-DotNet11Works
-        if (!$why) { Log ".NET 1.1 present and working"; return }
-        Warn ".NET 1.1 is installed but does not work ($why) - reinstalling it clean"
+    Log "--- .NET 1.1 for the menus: private copy in this install (nothing installed into Windows) ---"
+    $rt = Join-Path $root "Runtime\$PrivateNetVersion"
+    $bin = Join-Path $shell "bin"
+    if ($DryRun) { Log "  would unpack .NET 1.1 SP1 into $rt and copy its libraries next to AMPlayer.exe"; return }
+    if ((Test-Path -LiteralPath (Join-Path $rt "mscorwks.dll")) -and !$RepairDotNet) {
+        $why = Test-PrivateDotNet $rt
+        if (!$why) { Log "  present and working: $rt"; Copy-FrameworkToShell $rt $bin; return }
+        Warn "  the private .NET 1.1 does not work ($why) - unpacking it again"
     }
-    elseif ($present) { Log ".NET 1.1: clean reinstall requested (-RepairDotNet)" }
+    elseif ($RepairDotNet) { Log "  -RepairDotNet: unpacking it again" }
 
     $dep = Resolve-Dependencies
-    $dfx = if ($dep) { Join-Path $dep "DotNet11\dotnetfx.exe" } else { $null }
-    $sp1 = if ($dep) { Join-Path $dep "DotNet11\NDP1.1sp1-KB867460-X86.exe" } else { $null }
-    if (!$dfx -or !(Test-Path $dfx)) {
-        if ($present) { Fail ".NET 1.1 does not work and its installer (Dependencies\DotNet11\dotnetfx.exe) is not in this folder - unzip the release again." }
-        Warn ".NET 1.1 is missing and the redist is not bundled. The game itself does not need it,"
-        Warn "but the Anark shell + PLUSDE (the database layer) do. Install it, or use -SkipShell."
-        return
+    $dfx = if ($dep) { Join-Path $dep "DotNet11\dotnetfx.exe" } else { "" }
+    $sp1 = if ($dep) { Join-Path $dep "DotNet11\NDP1.1sp1-KB867460-X86.exe" } else { "" }
+    foreach ($f in $dfx, $sp1) {
+        if (!$f -or !(Test-Path -LiteralPath $f)) { Fail "The .NET 1.1 package (Dependencies\DotNet11\dotnetfx.exe and NDP1.1sp1-KB867460-X86.exe) is missing from this folder - unzip the release again." }
     }
-    if (!(Test-Path $sp1)) { Fail "NDP1.1sp1-KB867460-X86.exe is required on Windows 10/11 (plain redist = MSI 1603)" }
-    if ($DryRun) { Log $(if ($present) { "would remove and reinstall .NET 1.1 SP1" } else { "would install .NET 1.1 SP1 (slipstreamed)" }); return }
+    $w = Join-Path $LogDir "dotnet11"; $adm = Join-Path $LogDir "dotnet11_image"; $sp = Join-Path $LogDir "dotnet11_sp1"
+    Reset-Dir $w; Reset-Dir $adm; Reset-Dir $sp                    # never anything left by an earlier run
+    $p = Start-Process $dfx -ArgumentList "/q /c /t:`"$w`"" -Wait -PassThru
+    if (!(Test-Path (Join-Path $w "netfx.msi"))) { Fail "dotnetfx.exe could not be unpacked (exit $($p.ExitCode))" }
+    $p = Start-Process msiexec -ArgumentList "/a `"$w\netfx.msi`" TARGETDIR=`"$adm`" /qn" -Wait -PassThru
+    $urt = Get-ChildItem -LiteralPath $adm -Recurse -Filter mscorwks.dll -ErrorAction SilentlyContinue | Select-Object -First 1
+    if (!$urt) { Fail ".NET 1.1 could not be unpacked to files (msiexec /a exit $($p.ExitCode))" }
+    $urt = $urt.DirectoryName
+    Log "  unpacked .NET 1.1 ($((Get-Item (Join-Path $urt 'mscorwks.dll')).VersionInfo.FileVersion))"
+    Expand-Sp1Files $sp1 $w $sp
 
-    if ($present) { Remove-DotNet11 }
-    Install-DotNet11 $dfx $sp1
-    $why = Test-DotNet11Works
+    $new = "$rt.new"
+    Reset-Dir $new
+    foreach ($i in Get-ChildItem -LiteralPath $urt) {
+        if ($i.Name -ieq "GAC") { continue }                        # the image's assembly-cache copies: not used
+        Copy-Item -LiteralPath $i.FullName -Destination $new -Recurse -Force
+    }
+    Remove-Item -LiteralPath (Join-Path $new "gdiplus.dll") -Force -ErrorAction SilentlyContinue   # a real install leaves it out (Windows has its own)
+    Update-FromSp1 $new $sp
+    foreach ($f in "mscorwks.dll", "mscorlib.dll", "System.dll", "System.Data.dll", "System.Xml.dll", "System.Windows.Forms.dll", "System.Drawing.dll") {
+        $v = (Get-Item -LiteralPath (Join-Path $new $f)).VersionInfo.FileVersion
+        if ($v -ne $PrivateNetBuild) { Fail ".NET 1.1 SP1 was not applied: $f is version $v, not $PrivateNetBuild" }
+    }
+    if (Test-Path -LiteralPath $rt) { Reset-Dir $rt; Remove-Item -LiteralPath $rt -Force }
+    Rename-Item -LiteralPath $new -NewName $PrivateNetVersion
+    $why = Test-PrivateDotNet $rt
     if ($why) {
-        Fail (".NET 1.1 still does not work after a clean reinstall ($why). If an antivirus is active, add the install folder " +
+        Fail (".NET 1.1 was unpacked into $rt but does not run ($why). If an antivirus is active, add the install folder " +
               "and %TEMP%\NASCAR_GVR_Install as exclusions and run Install.bat again; otherwise send us %TEMP%\NASCAR_GVR_Install\install.log.")
     }
-    Log "  .NET 1.1 works"
+    Copy-FrameworkToShell $rt $bin
+    Remove-Item -LiteralPath $w, $adm, $sp -Recurse -Force -ErrorAction SilentlyContinue
+    Log "  .NET 1.1 SP1 ready: $rt"
 }
 
 # NASCAR_GVR.exe imports d3d9 directly and no d3dx9 helper, so the June-2010 redist
@@ -1294,6 +1485,10 @@ function Verify-Deployment($root, $game, $shell, $plus, $dbPath) {
         Need (Join-Path $shell "bin\GvrIO_oem.dll")          $true  "OEM GvrIO the shell's shim forwards to"
         Need (Join-Path $shell "bin\Dongle.dll")             $true  "shell dongle self-test (must be the v1.1-patched build)"
         Need (Join-Path $shell "bin\AMPlayer.exe.config")    $false "pins CLR 1.1 (PLUSDE access-violates on CLR 2.0 without it)"
+        if (!$SkipDotNet) {
+            Need (Join-Path $root "Runtime\$PrivateNetVersion\mscorwks.dll") $true "private .NET 1.1 SP1 the menus run on"
+            Need (Join-Path $shell "bin\System.Data.dll")    $true  ".NET library next to AMPlayer.exe (no global assembly cache)"
+        }
         Need (Join-Path $shell "bin\msvcp71d.dll")           $false "debug runtime (NASCARPlugIn silently fails to load without it)"
         Need (Join-Path $shell "bin\msvcr71d.dll")           $false "debug runtime (NASCARPlugIn silently fails to load without it)"
         Need (Join-Path $shell "bin\DongleStorageDevice.dll") $false "OEM storage device (car select needs the real one)"
@@ -1336,11 +1531,18 @@ function Invoke-Uninstall($root) {
     Log "=== UNINSTALL ==="
     $kind = Get-InstallKind $root
     if (!(Test-OurKind $kind)) { Fail ("Not removing $root - it holds " + (Get-KindText $kind) + ". Nothing was removed.") }
+    $nl = [Environment]::NewLine
+    $keep = Join-Path ([Environment]::GetFolderPath("MyDocuments")) ("NASCAR_GVR Backup\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
+    if ($ForceOverwrite -and !$DryRun) {
+        $ok = Ask-YesNo ("Remove $ShortcutName from this PC?" + $nl + $nl + $root + $nl + $nl +
+                         "Your scores, settings and calibration are copied to Documents\NASCAR_GVR Backup first.")
+        if ($ok -eq $false) { Log "uninstall cancelled - nothing was removed"; exit 0 }
+        Set-Location -LiteralPath $env:TEMP          # never hold the folder that is about to go
+    }
     if (Test-Path $root) {
         if (!$ForceOverwrite) { Warn "would remove $root  (re-run with -ForceOverwrite to delete)" }
         elseif ($DryRun) { Log "would remove $root" }
         else {
-            $keep = Join-Path ([Environment]::GetFolderPath("MyDocuments")) ("NASCAR_GVR Backup\" + (Get-Date -Format "yyyyMMdd-HHmmss"))
             [void](Backup-PlayerData $root $keep)
             Remove-Item -LiteralPath $root -Recurse -Force; Log "  removed $root"
         }
@@ -1360,7 +1562,9 @@ function Invoke-Uninstall($root) {
             if ((Test-OurShortcut $l.FullName $root) -and !$DryRun) { Remove-Item -LiteralPath $l.FullName -Force; Log "  removed shortcut $($l.Name)" }
         }
     }
+    if ($ForceOverwrite) { Unregister-Uninstall $root }
     Log "uninstall pass complete"
+    if ($ForceOverwrite -and !$DryRun) { Show-Message ("$ShortcutName was removed." + $nl + $nl + "Your scores, settings and calibration were copied to:" + $nl + $keep) }
 }
 
 # ============================ run =========================================
@@ -1371,6 +1575,18 @@ Log "============================================================"
 
 # A dry run touches nothing, so it is allowed unelevated - that is the whole point
 # of being able to preview an install before committing to it.
+# Started without administrator rights - Programs and Features runs Uninstall that way, and a
+# player may run the script by hand: ask Windows for them and run again with the same options.
+if (!(Test-Admin) -and !$DryRun) {
+    $relaunch = @("-NoProfile", "-STA", "-ExecutionPolicy", "Bypass", "-File", "`"$PSCommandPath`"")
+    foreach ($p in $PSBoundParameters.GetEnumerator()) {
+        if ($p.Value -is [System.Management.Automation.SwitchParameter]) { if ($p.Value.IsPresent) { $relaunch += "-$($p.Key)" } }
+        else { $relaunch += "-$($p.Key)"; $relaunch += "`"$($p.Value)`"" }
+    }
+    Log "not elevated - asking Windows for administrator rights"
+    try { Start-Process -FilePath (Join-Path $PSHOME "powershell.exe") -Verb RunAs -ArgumentList $relaunch | Out-Null; exit 0 }
+    catch { Fail "Administrator rights are needed to install or remove the game (Windows said: $($_.Exception.Message))." }
+}
 if (!(Test-Admin)) {
     if (!$DryRun) { Fail "Run this from an elevated Administrator PowerShell window (needed for the registry, fonts and the machine environment variable)." }
     Warn "not elevated - fine for -DryRun, but the real install needs an Administrator window"
@@ -1417,6 +1633,23 @@ function Assert-ReleaseFiles {
           "exclusion), unzip the release again and run Install.bat. Nothing was installed.")
 }
 Assert-ReleaseFiles
+
+# An install of this game is already on the PC: offer to update it (the usual case for players).
+if ([string]::IsNullOrEmpty($InstallRoot) -and !$Uninstall) {
+    foreach ($e in @(Find-ExistingInstalls)) {
+        Log "existing install found: $e"
+        $nl = [Environment]::NewLine
+        $q = "$ShortcutName is already installed in:" + $nl + $e + $nl + $nl +
+             "Update it now? No game disc is needed; your scores, settings and calibration are kept." + $nl + $nl +
+             "Yes = update this install        No = choose another folder"
+        $a = Ask-YesNo $q
+        if ($null -eq $a) {
+            Write-Host ""; Write-Host "$ShortcutName is already installed in $e" -ForegroundColor Cyan
+            $a = (Read-Host "Update it (no disc needed, scores and settings kept)? [Y/n]") -notmatch '^[nN]'
+        }
+        if ($a) { $InstallRoot = $e; break }
+    }
+}
 
 if ([string]::IsNullOrEmpty($InstallRoot) -and (Test-CanShowDialogs)) {
     while ($true) {
@@ -1541,7 +1774,6 @@ $drive = (Split-Path -Qualifier $InstallRoot) + "\"
 $free = (Get-PSDrive ($drive[0]) -ErrorAction SilentlyContinue).Free
 if ($free -and $free -lt 1GB) { Warn ("only {0:N1} GB free on {1} - about 0.8 GB is needed" -f ($free / 1GB), $drive) }
 
-Ensure-DotNet
 if (!$already -or $ForceOverwrite) {
     Install-Payload $Game $Shell $Gvr
     if ($PlayerBackup -and !$ResetData) { Restore-RaceSaves $PlayerBackup $Game }
@@ -1556,6 +1788,7 @@ Edit-OperatorXml $Shell
 Edit-GvrIoXml $Game
 Disable-GammaSet $Shell
 Install-ClrPin $Shell
+Install-PrivateDotNet $InstallRoot $Shell
 Install-Sqlite $Game $Shell $Plus $Db
 Ensure-DirectX
 Deploy-Dxvk $Game
@@ -1565,6 +1798,7 @@ Install-OemRev
 Install-Launcher $InstallRoot $Game $Shell
 Verify-Deployment $InstallRoot $Game $Shell $Plus $Db
 Write-InstallMarker $InstallRoot
+Register-Uninstall $InstallRoot
 
 # the unpacked disc (~800 MB) is only needed during the install
 if (!$DryRun -and $ExtractRoot -like (Join-Path $env:TEMP "*") -and (Test-Path $ExtractRoot)) {

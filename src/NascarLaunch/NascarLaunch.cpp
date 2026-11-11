@@ -41,9 +41,12 @@
 #include <vector>
 #include <ddraw.h>
 #include <d3d.h>
+#include <dbghelp.h>
+#include <tlhelp32.h>
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "dxguid.lib")
+#pragma comment(lib, "dbghelp.lib")
 
 static char g_root[MAX_PATH];      // install root (folder holding this exe)
 static char g_ini[MAX_PATH];       // nascar_settings.ini
@@ -103,6 +106,27 @@ static bool dotnet11_installed(void)
     if (!n || n > MAX_PATH - 48) return true;          // cannot tell -> do not block
     lstrcatA(p, "\\Microsoft.NET\\Framework\\v1.1.4322\\mscorlib.dll");
     return PathFileExistsA(p) != FALSE;
+}
+
+// A private .NET 1.1 in the install folder (<root>\Runtime\v1.1.4322), used instead of one installed
+// in Windows: the .NET loader takes COMPLUS_InstallRoot / COMPLUS_Version from the environment the
+// front end inherits (proven on a Windows 10 without .NET 1.1, 2026-11-11). The framework libraries
+// it binds to (System, System.Data, ...) must sit next to AMPlayer.exe - there is no library store.
+static bool private_runtime(char* dir, size_t n)
+{
+    char p[MAX_PATH];
+    snprintf(dir, n, "%s\\Runtime", g_root);
+    snprintf(p, sizeof(p), "%s\\v1.1.4322\\mscorwks.dll", dir);
+    return PathFileExistsA(p) != FALSE;
+}
+
+static void use_private_runtime(void)
+{
+    char dir[MAX_PATH];
+    if (!private_runtime(dir, sizeof(dir))) return;
+    SetEnvironmentVariableA("COMPLUS_InstallRoot", dir);
+    SetEnvironmentVariableA("COMPLUS_Version", "v1.1.4322");
+    logf(".net 1.1: the front end uses the private copy in %s", dir);
 }
 
 // [Debug] Log: the PC's DirectX 7 picture exactly as the Anark front ends' D3DX7 device list builds
@@ -259,7 +283,7 @@ static void log_pc_config(void)
              have ? m.dmPosition.x : 0, have ? m.dmPosition.y : 0,
              (dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) ? " (primary)" : "");
     }
-    logf(".net 1.1: %s", dotnet11_installed() ? "yes" : "NO (v1.1.4322\\mscorlib.dll missing)");
+    logf(".net 1.1 in Windows: %s", dotnet11_installed() ? "yes" : "no (fine: the game uses its own copy in Runtime)");
     // The shell's .NET 1.1 code parses US-format dates; the 2.0.2 shim runs the shell as en-US
     // whatever this says. Logged so a report shows the PC's own format at a glance.
     {
@@ -1025,6 +1049,141 @@ static void session_report(void)
     if (!shown) logf("windows crash records: none for AMPlayer / NASCAR_GVR in this session");
 }
 
+// ---------------------------------------------------------------- freeze capture ([Debug] Log)
+//
+// A front end that never shows a window, or stops answering, leaves nothing in any log (seen on a
+// PC where both games stopped before the first plug-in loaded). With [Debug] Log=true the launcher
+// watches the program it started and, once per session, when no window has appeared after
+// kFreezeNoWindowMs or its window has not answered for kFreezeHungMs, records:
+//   * every thread's call stack in nascarlaunch.log - module+offset and, where Windows' DLLs export
+//     one, the function name (no symbol server, nothing downloaded);
+//   * a small minidump, LOG\freeze-<program>-<pid>.dmp (threads, stacks, module list, handles).
+// The program keeps running; the player can still close it.
+static bool g_diag = false;
+static const DWORD kFreezeNoWindowMs = 20000;
+static const DWORD kFreezeHungMs     = 15000;
+
+static void log_thread_stacks(HANDLE proc, DWORD pid)
+{
+    SymSetOptions(SYMOPT_UNDNAME | SYMOPT_DEFERRED_LOADS | SYMOPT_FAIL_CRITICAL_ERRORS | SYMOPT_NO_PROMPTS);
+    if (!SymInitialize(proc, NULL, TRUE)) { logf("freeze: stack walk unavailable (%lu)", GetLastError()); return; }
+    HANDLE snap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    THREADENTRY32 te = { sizeof(te) };
+    int threads = 0;
+    for (BOOL ok = Thread32First(snap, &te); ok && threads < 64; ok = Thread32Next(snap, &te)) {
+        if (te.th32OwnerProcessID != pid) continue;
+        HANDLE th = OpenThread(THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, te.th32ThreadID);
+        if (!th) continue;
+        ++threads;
+        CONTEXT ctx = { 0 }; ctx.ContextFlags = CONTEXT_FULL;
+        DWORD sus = SuspendThread(th);
+        if (sus != (DWORD)-1 && GetThreadContext(th, &ctx)) {
+            logf("freeze: thread %lu", te.th32ThreadID);
+            STACKFRAME64 sf = { 0 };
+            sf.AddrPC.Offset = ctx.Eip;    sf.AddrPC.Mode = AddrModeFlat;
+            sf.AddrFrame.Offset = ctx.Ebp; sf.AddrFrame.Mode = AddrModeFlat;
+            sf.AddrStack.Offset = ctx.Esp; sf.AddrStack.Mode = AddrModeFlat;
+            for (int n = 0; n < 24 && StackWalk64(IMAGE_FILE_MACHINE_I386, proc, th, &sf, &ctx, NULL,
+                                                  SymFunctionTableAccess64, SymGetModuleBase64, NULL); ++n) {
+                DWORD64 pc = sf.AddrPC.Offset;
+                if (!pc) break;
+                IMAGEHLP_MODULE64 mi = { sizeof(mi) };
+                char sbuf[sizeof(SYMBOL_INFO) + 256]; SYMBOL_INFO* si = (SYMBOL_INFO*)sbuf;
+                si->SizeOfStruct = sizeof(SYMBOL_INFO); si->MaxNameLen = 255;
+                DWORD64 disp = 0;
+                bool mod = SymGetModuleInfo64(proc, pc, &mi) != FALSE;
+                bool sym = mod && SymFromAddr(proc, pc, &disp, si);
+                if (sym)      logf("freeze:     %s+0x%llX  (%s+0x%llX)", mi.ModuleName, pc - mi.BaseOfImage, si->Name, disp);
+                else if (mod) logf("freeze:     %s+0x%llX", mi.ModuleName, pc - mi.BaseOfImage);
+                else          logf("freeze:     %08llX (no module: generated code, e.g. .NET)", pc);
+            }
+        }
+        if (sus != (DWORD)-1) ResumeThread(th);
+        CloseHandle(th);
+    }
+    if (snap != INVALID_HANDLE_VALUE) CloseHandle(snap);
+    SymCleanup(proc);
+    logf("freeze: %d thread(s) recorded", threads);
+}
+
+static void freeze_capture(HANDLE proc, DWORD pid, const char* exe, const char* why)
+{
+    logf("freeze: %s - recording what it is doing (it keeps running)", why);
+    log_thread_stacks(proc, pid);
+    const char* b = strrchr(exe, '\\'); b = b ? b + 1 : exe;
+    char name[64]; lstrcpynA(name, b, sizeof name); char* dot = strrchr(name, '.'); if (dot) *dot = 0;
+    char path[MAX_PATH]; snprintf(path, sizeof(path), "%s\\LOG\\freeze-%s-%lu.dmp", g_root, name, pid);
+    HANDLE f = CreateFileA(path, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (f == INVALID_HANDLE_VALUE) { logf("freeze: could not create %s (%lu)", path, GetLastError()); return; }
+    BOOL ok = MiniDumpWriteDump(proc, pid, f, (MINIDUMP_TYPE)(MiniDumpWithThreadInfo | MiniDumpWithUnloadedModules |
+                                MiniDumpWithHandleData | MiniDumpWithProcessThreadData), NULL, NULL, NULL);
+    DWORD err = GetLastError();
+    LARGE_INTEGER sz = { 0 }; GetFileSizeEx(f, &sz);
+    CloseHandle(f);
+    if (ok) logf("freeze: minidump LOG\\freeze-%s-%lu.dmp (%lld KB)", name, pid, sz.QuadPart / 1024);
+    else { logf("freeze: minidump failed (%lu)", err); DeleteFileA(path); }
+}
+
+struct FreezeWatch { DWORD start, hungSince; bool sawWindow, done; };
+
+static BOOL CALLBACK visible_window_cb(HWND h, LPARAM lp)
+{
+    DWORD pid = 0; GetWindowThreadProcessId(h, &pid);
+    if (pid == ((DWORD*)lp)[0] && IsWindowVisible(h)) { ((HWND*)(((DWORD*)lp) + 1))[0] = h; return FALSE; }
+    return TRUE;
+}
+
+static void freeze_watch(FreezeWatch& w, HANDLE proc, DWORD pid, const char* exe)
+{
+    if (!g_diag || w.done) return;
+    struct { DWORD pid; HWND h; } q = { pid, NULL };
+    EnumWindows(visible_window_cb, (LPARAM)&q);
+    DWORD now = GetTickCount();
+    char why[160];
+    if (!q.h) {
+        if (!w.sawWindow && now - w.start >= kFreezeNoWindowMs) {
+            snprintf(why, sizeof why, "no window %lu s after the start", kFreezeNoWindowMs / 1000);
+            w.done = true; freeze_capture(proc, pid, exe, why);
+        }
+        w.hungSince = 0;
+        return;
+    }
+    w.sawWindow = true;
+    // IsHungAppWindow only reports a window as hung once input waits unanswered - a frozen window
+    // nobody clicks stays "fine" (seen 2026-11-11). Ask the window itself: an empty message must
+    // be answered within 2 s.
+    DWORD_PTR r = 0;
+    if (SendMessageTimeoutA(q.h, WM_NULL, 0, 0, SMTO_ABORTIFHUNG | SMTO_BLOCK, 2000, &r)) { w.hungSince = 0; return; }
+    if (!w.hungSince) { w.hungSince = now; return; }
+    if (now - w.hungSince >= kFreezeHungMs) {
+        snprintf(why, sizeof why, "its window has not answered for %lu s", kFreezeHungMs / 1000);
+        w.done = true; freeze_capture(proc, pid, exe, why);
+    }
+}
+
+// Runs on its own thread: the poll loop in run() tidies the game's windows with SetWindowPos, which
+// waits for a frozen window just like the player does - a watch inside that loop never fired.
+struct FreezeThreadCtx { HANDLE proc; DWORD pid; char exe[MAX_PATH]; };
+static DWORD WINAPI freeze_thread(LPVOID p)
+{
+    FreezeThreadCtx* c = (FreezeThreadCtx*)p;
+    FreezeWatch w = { GetTickCount(), 0, false, false };
+    while (!w.done && WaitForSingleObject(c->proc, 250) == WAIT_TIMEOUT) freeze_watch(w, c->proc, c->pid, c->exe);
+    CloseHandle(c->proc);
+    delete c;
+    return 0;
+}
+
+static void freeze_watch_start(HANDLE proc, DWORD pid, const char* exe)
+{
+    if (!g_diag) return;
+    FreezeThreadCtx* c = new FreezeThreadCtx;
+    c->pid = pid; lstrcpynA(c->exe, exe, MAX_PATH);
+    if (!DuplicateHandle(GetCurrentProcess(), proc, GetCurrentProcess(), &c->proc, 0, FALSE, DUPLICATE_SAME_ACCESS)) { delete c; return; }
+    HANDLE th = CreateThread(NULL, 0, freeze_thread, c, 0, NULL);
+    if (th) CloseHandle(th); else { CloseHandle(c->proc); delete c; }
+}
+
 static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, const Settings& s,
                  const char* preload = NULL)
 {
@@ -1039,6 +1198,7 @@ static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, 
         die("Could not start:\n%s\n\nWindows error %lu.", exe, GetLastError());
     }
     if (preload) { preload_dll(pi, preload); ResumeThread(pi.hThread); }
+    if (wait) freeze_watch_start(pi.hProcess, pi.dwProcessId, exe);
     give_focus(pi.dwProcessId);
     DWORD code = 0;
     if (wait) {
@@ -1109,7 +1269,8 @@ static void check_install(const Settings& s)
         logf("install check: all files present");
         // The front end needs .NET 1.1; without it AMPlayer starts and then hangs or fails with no
         // explanation. Installed per machine by Install.bat - copying the folder does not bring it.
-        if (s.mode != "race" && !dotnet11_installed())
+        char rt[MAX_PATH];
+        if (s.mode != "race" && !dotnet11_installed() && !private_runtime(rt, sizeof(rt)))
             die("NASCAR Team Racing is not fully set up on this PC.\n\n"
                 "Microsoft .NET Framework 1.1, which the game's menus need, was not found\n"
                 "(C:\\Windows\\Microsoft.NET\\Framework\\v1.1.4322).\n\n"
@@ -1190,6 +1351,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     ensure_anark_prefs();
 
     ensure_db_env();
+    use_private_runtime();
 
     char gameDir[MAX_PATH], shellDir[MAX_PATH], amPlayer[MAX_PATH], shellAm[MAX_PATH], gameExe[MAX_PATH];
     snprintf(gameDir,  sizeof(gameDir),  "%s\\Game", g_root);
@@ -1201,6 +1363,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     choose_teamracing_renderer(amPlayer);
     choose_classic_renderer(amPlayer);
     const bool diag = ini_bool("Debug", "Log", false);
+    g_diag = diag;                             // also arms the freeze capture in run()
     if (diag) debug_capture_start();
 
     if (s.mode == "race") {
