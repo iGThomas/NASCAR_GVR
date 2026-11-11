@@ -331,6 +331,7 @@ struct Settings {
     bool borderless;         // windowed race, frame stripped, covering its monitor
     int  musicVolume;
     int  simpleAttract;
+    bool extraDrivers;       // 1.1: the 19 extra disc cars on the driver select screen
     std::string mode;        // "shell" (cabinet) or "race" (straight in)
     std::string extraArgs;
     std::string track, series;
@@ -352,6 +353,7 @@ static void load_settings(Settings& s)
     if (s.borderless) s.fullscreen = false;
     s.musicVolume   = ini_int("Cabinet", "MusicVolume", 70);
     s.simpleAttract = ini_int("Cabinet", "SimpleAttract", 0);
+    s.extraDrivers  = ini_bool("Cabinet", "ExtraDrivers", true);
     s.mode          = ini_str("Launcher", "Mode", "shell");
     s.waitForExit   = ini_bool("Launcher", "WaitForExit", true);
     s.extraArgs     = ini_str("Race", "ExtraArgs", "-noabort -notimeout");
@@ -424,9 +426,44 @@ static void apply_settings(const Settings& s)
     snprintf(n, sizeof(n), "%d", s.height);        store_set("FullScreenHeight", n);
     snprintf(n, sizeof(n), "%d", s.musicVolume);   store_set("MusicVolume", n);
     snprintf(n, sizeof(n), "%d", s.simpleAttract); store_set("SimpleAttract", n);
+    store_set("ExtraDrivers", s.extraDrivers ? "1" : "0");
     store_set("cmd", compose_cmd(s));
     logf("settings -> nascar_registry.ini: %dx%d %s, cmd=\"%s\"", s.width, s.height,
          s.borderless ? "borderless" : (s.fullscreen ? "fullscreen" : "windowed"), compose_cmd(s).c_str());
+}
+
+// NASCAR Racing 1.1: the extra drivers' pictures (faces, name plates, numbers) are built on this PC
+// from the disc's own files by Tools\GvrDriverArt.exe; players may replace the pictures in
+// Shell\Textures\Faces, Names and Numbers. "sheets" rebuilds what the scene reads only when one of
+// those files changed since the last start (it compares a signature file), so a normal start costs
+// well under a second. A failure is logged and the shell still starts (the extra drivers then show
+// the pictures of the previous build, or blank cards).
+static bool is_teamracing_shell(const char* amPlayer);
+static void build_driver_art(const Settings& s, const char* amPlayer)
+{
+    if (!s.extraDrivers) return;
+    char exe[MAX_PATH];
+    snprintf(exe, sizeof(exe), "%s\\Tools\\GvrDriverArt.exe", g_root);
+    if (!PathFileExistsA(exe) || is_teamracing_shell(amPlayer)) return;
+    char cmd[MAX_PATH * 2 + 32];
+    snprintf(cmd, sizeof(cmd), "\"%s\" sheets \"%s\"", exe, g_root);
+    STARTUPINFOA si = { sizeof(si) }; si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = { 0 };
+    DWORD t0 = GetTickCount();
+    if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, g_root, &si, &pi)) {
+        logf("driver art: could not start %s (error %lu)", exe, GetLastError());
+        return;
+    }
+    DWORD code = 0;
+    if (WaitForSingleObject(pi.hProcess, 60000) == WAIT_TIMEOUT) {
+        TerminateProcess(pi.hProcess, 3); code = 3;
+        logf("driver art: no answer after 60 s - stopped, the shell starts with the previous pictures");
+    } else {
+        GetExitCodeProcess(pi.hProcess, &code);
+        logf("driver art: exit %lu after %lu ms%s", code, GetTickCount() - t0,
+             code == 0 ? "" : " (see LOG\\gvrdriverart.log)");
+    }
+    CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
 }
 
 // Anark Client 3.0 preferences (GvrShell.reg's HKCU part) - per-user, no rights needed.
@@ -1350,15 +1387,19 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     apply_settings(s);
     ensure_anark_prefs();
 
-    ensure_db_env();
-    use_private_runtime();
-
     char gameDir[MAX_PATH], shellDir[MAX_PATH], amPlayer[MAX_PATH], shellAm[MAX_PATH], gameExe[MAX_PATH];
     snprintf(gameDir,  sizeof(gameDir),  "%s\\Game", g_root);
     snprintf(shellDir, sizeof(shellDir), "%s\\Shell", g_root);
     snprintf(amPlayer, sizeof(amPlayer), "%s\\bin\\AMPlayer.exe", shellDir);
     snprintf(shellAm,  sizeof(shellAm),  "%s\\Shell.am", shellDir);
     snprintf(gameExe,  sizeof(gameExe),  "%s\\NASCAR_GVR.exe", gameDir);
+
+    // before use_private_runtime: the builder is a .NET 4 program, and the COMPLUS_* variables that
+    // select the private .NET 1.1 for the menus would make it fail ("mscorwks.dll could not be loaded")
+    if (s.mode != "race") build_driver_art(s, amPlayer);
+
+    ensure_db_env();
+    use_private_runtime();
 
     choose_teamracing_renderer(amPlayer);
     choose_classic_renderer(amPlayer);

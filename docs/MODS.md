@@ -75,6 +75,15 @@ others. Tested: MP3, 44.1 kHz, stereo, 128 and 320 kbps. Not tested: 48 kHz, mon
 Gamepad and PC wheel support, the horn stops on release, the private registry and the SQLite
 database are described in `docs/findings/NASCAR_FINDINGS.md`.
 
+### Mods
+
+| Change | Original arcade | Setting |
+|---|---|---|
+| 31 playable drivers: the 19 race cars on the disc that had no driver select slot (Kevin Harvick, Mark Martin, Joe Nemechek, Bobby Labonte, Dale Jarrett, ...) are added after the original 12, each with its own car, name plate, number and team lines | 12 drivers; the other 19 cars race only as AI opponents | `[Cabinet] ExtraDrivers = true` (`false` = the original 12). Scene `NASCAR_Selection.am` patched (original kept as `*.oem`); the driver list is in `nascar_registry.ini` (`ExtraDriverN`) |
+| Pictures of the added drivers built on the player's PC from the disc's own files: name plates from the disc's letters, numbers from each car's own paint, leaderboard badges and menu car pictures from the race files; portraits are placeholders showing the name and number (NASCAR Team Racing's portrait is used for drivers both games share, when it is installed on the same PC) | — | Built by `Tools\GvrDriverArt.exe` at install |
+| Player-made pictures: replace any file in `Shell\Textures\Faces` (256x256 portrait), `Names` (512x64 name plate) or `Numbers` (128x64 number); file name = car number + name, as already there. The launcher puts changed pictures into the menus at the next start. Kept by updates and backups | — | `Shell\Textures\Faces\README.txt` |
+| Leaderboard (high-score screens) shows the car badge of every car, #01 and #1 kept apart | Badge only for the original 12 cars | Scene `NASCAR_Attract.am` patched |
+
 | Problem on a PC | Fix |
 |---|---|
 | Attract never loaded on Windows set to a day/month date format, e.g. Dutch, German, Japanese | Shim runs the front end with US region settings (*in memory*; `GVRIOSHIM_NO_LOCALE_FIX=1` turns it off) |

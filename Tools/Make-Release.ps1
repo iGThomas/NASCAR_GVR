@@ -23,7 +23,7 @@ $zip = Join-Path $repo "dist\$name.zip"
 $files = @(
     "Install.bat", "Install-NASCAR.ps1",
     # NASCAR Racing (v1.1 disc)
-    "Install-NASCAR-GVR-Portable.ps1", "Patches\nascar-bytepatches.txt",
+    "Install-NASCAR-GVR-Portable.ps1", "Patches\nascar-bytepatches.txt", "Patches\extra-drivers-11.txt", "src\DriverArt\GvrDriverArt.exe",
     "Deploy\PLUSDE.dll", "Deploy\GvrSqlite.dll", "Deploy\sqlite3.dll", "Deploy\game.db",
     # NASCAR Team Racing (2.0.2 disc)
     "Install-NASCAR-Team-Racing-Portable.ps1", "Patches\nascar-202-bytepatches.txt",
@@ -32,7 +32,7 @@ $files = @(
     # both
     "Tools\unshield.exe", "Tools\Fix-GvrDirNames.ps1", "Tools\Check-DotNet11.ps1",
     "src\GvrIOShim\build\GvrIO.dll",
-    "src\NascarLaunch\build\NascarLaunch.exe", "src\NascarLaunch\nascar_settings.ini", "src\NascarLaunch\NASCAR_GVR.ico",
+    "src\NascarLaunch\build\NascarLaunch.exe", "src\NascarLaunch\nascar_settings.ini", "src\NascarLaunch\NASCAR_Racing.ico", "src\NascarLaunch\NASCAR_Team_Racing.ico",
     "src\GvrSqlite\GvrSqlite.cs",
     "Dependencies\DotNet11\dotnetfx.exe", "Dependencies\DotNet11\NDP1.1sp1-KB867460-X86.exe",
     "Dependencies\DXVK\d3d9.dll"

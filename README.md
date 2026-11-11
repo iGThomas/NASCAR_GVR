@@ -130,6 +130,10 @@ In the install folder. The main ones:
   picks what works on this PC: Team Racing OpenGL when available, NASCAR Racing Direct3D 7 unless
   this PC fails the game's Direct3D test, then OpenGL; `opengl` / `directx` force one)
 - `[Controller]` / `[Frontend]` — the gamepad button map for the race and the menus
+- `[Cabinet] ExtraDrivers` — NASCAR Racing: `true` (default) adds the 19 race cars on the disc
+  that have no driver select slot as playable drivers; `false` keeps the original 12. Their
+  portraits, name plates and numbers can be replaced in `Shell\Textures\Faces`, `Names` and
+  `Numbers` (see `Faces\README.txt` there); the next start puts them in the menus
 - `[Debug] Log=true` — writes diagnostics to a `LOG` folder in the install root: your PC config
   (CPU, motherboard, GPU + driver version), the launch timeline, a native crash filter for the
   shell and the race, the database log, the menus' and the race's own messages, the race engine's

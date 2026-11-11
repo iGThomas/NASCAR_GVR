@@ -1,0 +1,53 @@
+# NASCAR Racing 1.1 - extra playable drivers: every race car on the disc that has no driver select slot.
+# Read by GvrDriverArt.exe; the pictures are built on the player's PC from the game's own files.
+#
+# plate|<existing name plate file key>|<its text in capitals>   (letters for new name plates are cut from these)
+plate|DaleJr|DALE EARNHARDT JR.
+plate|DennyHamlin|DENNY HAMLIN
+plate|GregBiffle|GREG BIFFLE
+plate|JeffBurton|JEFF BURTON
+plate|JeffGordon|JEFF GORDON
+plate|JimmieJohnson|JIMMIE JOHNSON
+plate|JoeNemechek|JOE NEMECHEK
+plate|KaseyKahne|KASEY KAHNE
+plate|KevinHarvick|KEVIN HARVICK
+plate|KurtBusch|KURT BUSCH
+plate|KyleBusch|KYLE BUSCH
+plate|MattKenseth|MATT KENSETH
+plate|RyanNewman|RYAN NEWMAN
+plate|TonyStewart|TONY STEWART
+#
+# donor|<driver select slot>|<its car number>|<face picture offset>|<number picture offset>   (in Shell/NASCAR_Selection.am)
+donor|Master_Component|11|0x3f4eb7|0x5e3376
+donor|KyleBusch|5|0x5a9f2d|0x58589b
+donor|DaleEarnhardtJr|8|0x4d9b41|0x5c808f
+donor|JeffBurton|31|0x2d2578|0x58cfe7
+donor|KaseyKahne|9|0x468b90|0x4c666f
+donor|RyanNewman|12|0x43a4e7|0x348507
+donor|KurtBusch|2|0x479afc|0x53ba9e
+donor|MattKenseth|17|0x28f233|0x1530f9
+donor|GregBiffle|16|0x5fedc1|0x2c3350
+#
+# driver|<car number>|<make>|<donor slot>|<cell 1-3 in the donor's sheets>|<slot whose card colour it takes>|<name>
+#       |<info lines, / separated>|<Team Racing portrait used while the face file is the placeholder>
+#       |<number fill R,G,B>|<number outline R,G,B>|<colour match for the number shape>
+#       |<measure the fill colour 1/0>|<include the painted outline 1/0>
+driver|18|Chevy|Master_Component|1|Master_Component|J.J. Yeley|Interstate Batteries/Chevrolet/Joe Gibbs Racing||225,25,35|255,255,255|110|0|1
+driver|25|Chevy|KyleBusch|1|KyleBusch|Brian Vickers|GMAC/Chevrolet/Hendrick Motorsports||255,255,255|30,60,170|110|0|0
+driver|1|Chevy|DaleEarnhardtJr|1|DaleEarnhardtJr|Martin Truex Jr.|Bass Pro Shops/Chevrolet/Dale Earnhardt, Inc.||255,255,255|200,20,30|110|0|0
+driver|01|Chevy|DaleEarnhardtJr|2|Master_Component|Joe Nemechek|U.S. Army/Chevrolet/Ginn Racing|DriverSelectImageJoeNemechek.png|255,255,255|214,170,40|110|0|0
+driver|14|Chevy|DaleEarnhardtJr|3|GregBiffle|Sterling Marlin|Waste Management/Chevrolet/Ginn Racing||250,200,20|20,120,50|70|1|0
+driver|29|Chevy|JeffBurton|1|Master_Component|Kevin Harvick|GM Goodwrench/Chevrolet/Richard Childress Racing||230,30,40|255,255,255|80|1|1
+driver|10|Dodge|KaseyKahne|1|RyanNewman|Scott Riggs|Valvoline/Dodge/Evernham Motorsports||30,50,170|255,255,255|70|1|0
+driver|19|Dodge|KaseyKahne|2|KaseyKahne|Jeremy Mayfield|Dodge Dealers/Dodge/Evernham Motorsports||255,255,255|200,20,30|110|0|0
+driver|55|Dodge|KaseyKahne|3|RyanNewman|Michael Waltrip|NAPA Auto Parts/Dodge/Waltrip-Jasper Racing||255,255,255|240,120,20|110|0|0
+driver|40|Dodge|RyanNewman|1|Master_Component|David Stremme|Lone Star Steakhouse/Dodge/Chip Ganassi Racing||255,235,30|30,30,30|70|1|0
+driver|41|Dodge|RyanNewman|2|KurtBusch|Reed Sorenson|Target/Dodge/Chip Ganassi Racing|DriverSelectImageReedSorenson.png|225,25,35|255,255,255|110|0|1
+driver|42|Dodge|RyanNewman|3|Master_Component|Casey Mears|Texaco Havoline/Dodge/Chip Ganassi Racing||210,25,30|255,255,255|110|0|1
+driver|43|Dodge|KurtBusch|1|RyanNewman|Bobby Labonte|Cheerios/Dodge/Petty Enterprises|DriverSelectImageBobbyLabonte.png|255,255,255|40,80,190|110|0|0
+driver|45|Dodge|KurtBusch|2|KaseyKahne|Kyle Petty|Wells Fargo/Dodge/Petty Enterprises||255,255,255|190,20,30|110|0|0
+driver|22|Dodge|KurtBusch|3|JeffGordon|Dave Blaney|Caterpillar/Dodge/Bill Davis Racing||225,25,35|255,255,255|110|0|1
+driver|26|Ford|MattKenseth|1|RyanNewman|Jamie McMurray|Irwin Industrial Tools/Ford/Roush Racing||250,200,30|40,60,170|110|0|0
+driver|6|Ford|MattKenseth|2|RyanNewman|Mark Martin|AAA/Ford/Roush Racing||30,70,180|255,255,255|110|0|0
+driver|38|Ford|GregBiffle|1|JeffGordon|Elliott Sadler|M&M's/Ford/Robert Yates Racing||255,255,255|110,60,30|110|0|0
+driver|88|Ford|GregBiffle|2|JimmieJohnson|Dale Jarrett|UPS/Ford/Robert Yates Racing||240,170,60|90,50,20|110|0|0
