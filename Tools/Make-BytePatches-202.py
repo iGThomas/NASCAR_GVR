@@ -5,9 +5,15 @@ from the extracted 2.0.2 disc with the patched copies in a working 2.0.2 install
 writes Patches\\nascar-202-bytepatches.txt. Only same-size patches (verify-then-overwrite,
 no Python on the player's PC).
 
-NASCAR_Selection.am is deliberately NOT here: its only edit is the MusicDir absolute
-path, which depends on the install location and is applied separately (menu music is a
-beta.2 item). The dongle image and the mode-limit are done at runtime by the shim.
+NASCAR_Selection.am carries only the Kevin Harvick edit here. Its MusicDir absolute path
+depends on the install location and must be applied separately (after these patches; the
+patch check only looks at its own offsets). The dongle image and the mode-limit are done
+at runtime by the shim.
+
+Kevin Harvick: the 2.0.2 disc removes him as a playable driver in three scene one-offs
+(driver select skips him, the Drivers operator page shows him as "Disable" and refuses
+changes, the attract high-score screen shows car 29 as number 100). All three are removed;
+the operator Drivers page is the switch (DriversDisabled bit 8 = original arcade).
 
 Usage: python -I Make-BytePatches-202.py <payload File_Group> <working install> <out file>
 """
@@ -19,7 +25,9 @@ FILES = [
     r"Shell\bin\Dongle.dll",                 # image NASCAR2.0CTRYXX_CAB0 (fixed, same-size)
     r"Shell\bin\plugins\HerculesPlugIn.dll", # coin-monitor wait (if patched)
     r"Shell\Shell.am",                       # nvcpl Gvr.Launch mode 0 -> 2 (x2); 15 s IO-board wait -> 0.5 s
-    r"Shell\NASCAR_Attract.am",              # CabinetComm receivedPacket && guard
+    r"Shell\NASCAR_Attract.am",              # CabinetComm receivedPacket && guard; high scores show car 29 (not 100)
+    r"Shell\NASCAR_Selection.am",            # driver select no longer skips Kevin Harvick
+    r"Shell\OPERATOR_MENUS\Operator.am",     # Drivers page: Kevin Harvick no longer forced to "Disable"
 ]
 MERGE_GAP = 8
 

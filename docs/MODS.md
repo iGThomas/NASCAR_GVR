@@ -21,6 +21,7 @@ are applied by the `GvrIO.dll` shim while the game runs.
 | Name-entry screens move one slot per press (keyboard, pad) or follow a PC wheel's position | Cabinet wheel position picks the slot | — |
 | Free play, all six tracks enabled, in-race engine volume 100 | Coin-op pricing, tracks per operator, engine volume 0 in the shipped database | Operator menu |
 | The PC is never restarted by the game | Nightly "restart scheduled" countdown, then `shutdown.exe -r -f` (restarts Windows) | — |
+| Kevin Harvick (#29, Richard Childress Racing) is a playable driver again, in his Shell-Pennzoil car: shown at driver select, switched on or off on the operator Drivers page like every other driver, car 29 on the high-score screens | Removed: skipped at driver select; Drivers page always shows "Disable" and refuses changes; car 29 is a fantasy AI car (#100 "Drafty", GlobalVR #53 paint), shown as 100 in high scores | Operator menu, Drivers page (set Harvick to Disable for the original line-up). Scenes `NASCAR_Selection.am`, `NASCAR_Attract.am`, `OPERATOR_MENUS\Operator.am` patched; `29.veh` edited; `29-01.dds` rebuilt by the installer from the menus' own picture of his car (`Shell\Textures\CarSkin29.jpg`); originals kept as `*.oem`. A custom `29-01.dds` is left alone |
 
 Note: Tiger Fists is mastered about 15 dB quieter than the other songs and is hard to hear over
 the engine.

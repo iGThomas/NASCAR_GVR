@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-11-11-teamracing-portable-1.5" # 1.5: release v1.2.1 - an existing install is found and offered for update (Programs and Features entry, shortcuts, usual folders); each install gets a Programs and Features entry with a working Uninstall (asks first, keeps the player data in Documents; uninstaller copy in <install>\Setup); the script asks Windows for administrator rights itself; the one-file NASCAR-GVR-<version>-Setup.exe runs it. .NET 1.1 is no longer installed into Windows: the installer unpacks .NET 1.1 SP1 into <install>\Runtime (and its libraries next to AMPlayer.exe), run-tests it there, and NascarLaunch.exe starts the menus on that private copy (rebuilt NascarLaunch.exe). Fixes clean PCs where the SP1 package could not even unpack (it needs an older .NET to run) and PCs whose Windows .NET 1.1 was damaged; -RepairDotNet now unpacks the private copy again. The Windows event source GVR takes its messages from the private copy. 1.4: release v1.2.1-beta.4 - shared launcher / shim: DirectX 7 report and the menus' own renderer verdict in the log with [Debug] Log=true (rebuilt NascarLaunch.exe, GvrIO.dll). 1.3: release v1.2.1-beta.3 - registers the Windows event source GVR (Application log): without it the menus went black at start-up on every PC that never had it (.NET 1.1 tried to create the source, which needs administrator rights; NASCAR_INITIALIZE_SHELL threw). Launcher warns when the source is missing (rebuilt NascarLaunch.exe). 1.2: release v1.2.1-beta.2 - with [Debug] Log=true the menus' script errors and exceptions go to LOG\aklog-AMPlayer.log (rebuilt AKLogShim.dll), plus the shared diagnostics of 4.18 (debug output, race traces, Windows crash records, overlay DLLs, the GPU the menus draw with), so one player log shows why the menus fail. 1.1: release v1.2.1-beta.1 - menus pick OpenGL or Direct3D by testing OpenGL at every start ([Display] Renderer = auto; no picture before on PCs with only software OpenGL), OpenGL no longer greyed out on drivers listing only newer extension names, AKLogShim answers only this front end (NASCAR Racing 1.1 on the same PC loaded it), plus the shared controller and shutdown fixes of 4.17 (rebuilt GvrIO.dll, NascarLaunch.exe, AKLogShim.dll). 1.0: first release, in v1.2.0 (one zip with NASCAR Racing - Install.bat asks which game); everything of 0.1-beta and 0.2-beta below. 0.2-beta: start-up ~9 s instead of ~23 s (Shell.am 15 s IO-board wait -> 0.5 s, as in 1.1); runs on any Windows region format (the shell parses US dates; it now runs as en-US - crashed or hung on day/month Windows), the game can never restart the PC (the cabinet's nightly restart prompt is off and shutdown.exe / restart calls are blocked), database password no longer written to the log, region format in the launcher log, race accepts display modes up to 16384 pixels (5120x1440 was blurry), shipped game.db with empty play statistics, steering wheels with pedals, a gear shifter, a separate rim or button boxes on their own USB cables, set up automatically (pedals and shifter type learned from use, PC pedals calibrated on the arcade's own screen and saved in nascar_calibration.ini (kept as player data), force feedback on joystick-type bases; [Wheel] overrides; controls: line in the log). 0.1-beta: first NASCAR Team Racing (2.0.2) package - cabinet shell + race, Xbox/PS pad + wheel, SQLite, byte-patched plug-ins/scenes, AKLogShim COM stub, OpenGL renderer (alt-tab safe); installs to NASCAR_GVR_2.0 alongside the 1.1 edition. (The 4.x history below is the shared installer's 1.1 line.) 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
+$Version = "2026-11-11-teamracing-portable-1.6" # 1.6: Kevin Harvick (#29) playable again - the disc removed him (driver select skipped him, the operator Drivers page locked him to "Disable", high scores showed car 29 as 100, his race car file was a fantasy AI car with a GlobalVR #53 paint): scene patches in the byte-patch table, 29.veh set back to #29 Kevin Harvick, his Shell-Pennzoil race paint rebuilt from the menus' own picture of his car (Restore-HarvickCar). 1.5: release v1.2.1 - an existing install is found and offered for update (Programs and Features entry, shortcuts, usual folders); each install gets a Programs and Features entry with a working Uninstall (asks first, keeps the player data in Documents; uninstaller copy in <install>\Setup); the script asks Windows for administrator rights itself; the one-file NASCAR-GVR-<version>-Setup.exe runs it. .NET 1.1 is no longer installed into Windows: the installer unpacks .NET 1.1 SP1 into <install>\Runtime (and its libraries next to AMPlayer.exe), run-tests it there, and NascarLaunch.exe starts the menus on that private copy (rebuilt NascarLaunch.exe). Fixes clean PCs where the SP1 package could not even unpack (it needs an older .NET to run) and PCs whose Windows .NET 1.1 was damaged; -RepairDotNet now unpacks the private copy again. The Windows event source GVR takes its messages from the private copy. 1.4: release v1.2.1-beta.4 - shared launcher / shim: DirectX 7 report and the menus' own renderer verdict in the log with [Debug] Log=true (rebuilt NascarLaunch.exe, GvrIO.dll). 1.3: release v1.2.1-beta.3 - registers the Windows event source GVR (Application log): without it the menus went black at start-up on every PC that never had it (.NET 1.1 tried to create the source, which needs administrator rights; NASCAR_INITIALIZE_SHELL threw). Launcher warns when the source is missing (rebuilt NascarLaunch.exe). 1.2: release v1.2.1-beta.2 - with [Debug] Log=true the menus' script errors and exceptions go to LOG\aklog-AMPlayer.log (rebuilt AKLogShim.dll), plus the shared diagnostics of 4.18 (debug output, race traces, Windows crash records, overlay DLLs, the GPU the menus draw with), so one player log shows why the menus fail. 1.1: release v1.2.1-beta.1 - menus pick OpenGL or Direct3D by testing OpenGL at every start ([Display] Renderer = auto; no picture before on PCs with only software OpenGL), OpenGL no longer greyed out on drivers listing only newer extension names, AKLogShim answers only this front end (NASCAR Racing 1.1 on the same PC loaded it), plus the shared controller and shutdown fixes of 4.17 (rebuilt GvrIO.dll, NascarLaunch.exe, AKLogShim.dll). 1.0: first release, in v1.2.0 (one zip with NASCAR Racing - Install.bat asks which game); everything of 0.1-beta and 0.2-beta below. 0.2-beta: start-up ~9 s instead of ~23 s (Shell.am 15 s IO-board wait -> 0.5 s, as in 1.1); runs on any Windows region format (the shell parses US dates; it now runs as en-US - crashed or hung on day/month Windows), the game can never restart the PC (the cabinet's nightly restart prompt is off and shutdown.exe / restart calls are blocked), database password no longer written to the log, region format in the launcher log, race accepts display modes up to 16384 pixels (5120x1440 was blurry), shipped game.db with empty play statistics, steering wheels with pedals, a gear shifter, a separate rim or button boxes on their own USB cables, set up automatically (pedals and shifter type learned from use, PC pedals calibrated on the arcade's own screen and saved in nascar_calibration.ini (kept as player data), force feedback on joystick-type bases; [Wheel] overrides; controls: line in the log). 0.1-beta: first NASCAR Team Racing (2.0.2) package - cabinet shell + race, Xbox/PS pad + wheel, SQLite, byte-patched plug-ins/scenes, AKLogShim COM stub, OpenGL renderer (alt-tab safe); installs to NASCAR_GVR_2.0 alongside the 1.1 edition. (The 4.x history below is the shared installer's 1.1 line.) 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -905,6 +905,10 @@ function Install-Sqlite($game, $shell, $plus, $dbPath) {
 #   Shell.am                          - 15 s IO-board wait at startup -> 0.5 s
 #                                       and no "rundll32 nvcpl.dll,dtcfg setmode" calls (a RunDLL
 #                                       error box on PCs without a 32-bit NVIDIA nvcpl.dll)
+#   Kevin Harvick playable again      - the disc's three one-offs removed: NASCAR_Selection.am
+#                                       (driver select skipped him), OPERATOR_MENUS\Operator.am
+#                                       (Drivers page locked him to "Disable"), NASCAR_Attract.am
+#                                       (high scores showed car 29 as number 100)
 #   NASCAR_Selection/Attract.am, the operator-menu scenes
 #                                     - cabinet C:\NASCAR texture/audio paths made relative and
 #                                       the SendPacket calls to the missing link board removed
@@ -1049,6 +1053,135 @@ function Edit-GvrIoXml($game) {
     if (!(Test-Path "$p.oem")) { Copy-Item -LiteralPath $p -Destination "$p.oem" }
     [IO.File]::WriteAllText($p, $t)
     Log "  GvrIO.xml: J = horn added, A = motion-seat panel removed"
+}
+
+# Kevin Harvick (#29). The disc turns his race car into a fantasy AI car (29.veh: number 100,
+# "Drafty", GlobalVR #53 paint), so a race started with car 29 fails and returns to the menus.
+# Restored: the car file says #29 Kevin Harvick again, and his race paint is rebuilt from the
+# menus' own picture of his car (Shell\Textures\CarSkin29.jpg, same paint layout) plus the shine
+# map (alpha) of car 31. Written uncompressed with all mipmaps (the race needs mipmaps for AI
+# cars). Only the disc's own files are changed; a custom 29-01.dds is left alone. The scene
+# patches that show him at driver select are in the byte-patch table.
+$HarvickVehOem = "5f44bbcc8ac860bacbee14779e6d46c5e05607629ea385886e2c879ba592692b"
+$HarvickDdsOem = "026a969039e325258be26893cb6b540d847c0655a95cc2f001f9f340adbb2839"
+$GvrSkinCs = @'
+using System;
+using System.IO;
+using System.Text;
+using System.Drawing;
+using System.Drawing.Drawing2D;
+using System.Drawing.Imaging;
+using System.Runtime.InteropServices;
+public static class GvrSkin {
+    // level-0 alpha of a DXT3 .dds (explicit 4-bit alpha, 4x4 blocks)
+    static byte[] Dxt3Alpha(string path, out int w, out int h) {
+        byte[] d = File.ReadAllBytes(path);
+        if (d.Length < 128 || Encoding.ASCII.GetString(d, 0, 4) != "DDS " || Encoding.ASCII.GetString(d, 84, 4) != "DXT3")
+            throw new Exception("not a DXT3 .dds: " + path);
+        h = BitConverter.ToInt32(d, 12); w = BitConverter.ToInt32(d, 16);
+        if (w != h || w < 4 || (w & (w - 1)) != 0 || 128 + w * h > d.Length) throw new Exception("unexpected size in " + path);
+        byte[] a = new byte[w * h];
+        int off = 128;
+        for (int by = 0; by < h / 4; by++)
+            for (int bx = 0; bx < w / 4; bx++) {
+                for (int i = 0; i < 16; i++) {
+                    int nib = (d[off + i / 2] >> ((i & 1) * 4)) & 0xF;
+                    a[(by * 4 + (i >> 2)) * w + bx * 4 + (i & 3)] = (byte)(nib * 17);
+                }
+                off += 16;
+            }
+        return a;
+    }
+    static Bitmap Scale(Bitmap src, int s) {
+        Bitmap dst = new Bitmap(s, s, PixelFormat.Format32bppArgb);
+        using (Graphics g = Graphics.FromImage(dst))
+        using (ImageAttributes ia = new ImageAttributes()) {
+            g.CompositingMode = CompositingMode.SourceCopy;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic;
+            g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            ia.SetWrapMode(WrapMode.TileFlipXY);
+            g.DrawImage(src, new Rectangle(0, 0, s, s), 0, 0, src.Width, src.Height, GraphicsUnit.Pixel, ia);
+        }
+        return dst;
+    }
+    static byte[] Pixels(Bitmap b) {   // BGRA, tightly packed
+        Rectangle r = new Rectangle(0, 0, b.Width, b.Height);
+        BitmapData bd = b.LockBits(r, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+        byte[] p = new byte[b.Width * b.Height * 4];
+        for (int y = 0; y < b.Height; y++)
+            Marshal.Copy(new IntPtr(bd.Scan0.ToInt64() + (long)y * bd.Stride), p, y * b.Width * 4, b.Width * 4);
+        b.UnlockBits(bd);
+        return p;
+    }
+    // colour from an image, alpha from a DXT3 skin -> uncompressed A8R8G8B8 .dds with full mipmaps
+    public static void Build(string colourImage, string alphaDds, string outDds) {
+        int w, h;
+        byte[] alpha = Dxt3Alpha(alphaDds, out w, out h);
+        // colour and alpha are scaled separately: drawing ARGB would darken colours under low alpha
+        Bitmap colour, alphaImg = new Bitmap(w, h, PixelFormat.Format32bppArgb);
+        using (Bitmap raw = new Bitmap(colourImage)) { colour = Scale(raw, w); }
+        byte[] ap = new byte[w * h * 4];
+        for (int i = 0; i < w * h; i++) { ap[i * 4] = ap[i * 4 + 1] = ap[i * 4 + 2] = alpha[i]; ap[i * 4 + 3] = 255; }
+        BitmapData bd = alphaImg.LockBits(new Rectangle(0, 0, w, h), ImageLockMode.WriteOnly, PixelFormat.Format32bppArgb);
+        for (int y = 0; y < h; y++) Marshal.Copy(ap, y * w * 4, new IntPtr(bd.Scan0.ToInt64() + (long)y * bd.Stride), w * 4);
+        alphaImg.UnlockBits(bd);
+        int mips = 0; for (int s = w; s >= 1; s >>= 1) mips++;
+        using (FileStream fs = new FileStream(outDds, FileMode.Create, FileAccess.Write))
+        using (BinaryWriter bw = new BinaryWriter(fs)) {
+            bw.Write(Encoding.ASCII.GetBytes("DDS "));
+            bw.Write(124); bw.Write(0x1 | 0x2 | 0x4 | 0x8 | 0x1000 | 0x20000);   // CAPS HEIGHT WIDTH PITCH PIXELFORMAT MIPMAPCOUNT
+            bw.Write(h); bw.Write(w); bw.Write(w * 4); bw.Write(0); bw.Write(mips);
+            bw.Write(new byte[44]);
+            bw.Write(32); bw.Write(0x41); bw.Write(0); bw.Write(32);                 // RGB | ALPHAPIXELS, 32 bit
+            bw.Write(0x00FF0000); bw.Write(0x0000FF00); bw.Write(0x000000FF); bw.Write(unchecked((int)0xFF000000));
+            bw.Write(0x1000 | 0x8 | 0x400000); bw.Write(0); bw.Write(0); bw.Write(0); bw.Write(0);   // TEXTURE COMPLEX MIPMAP
+            for (int s = w; s >= 1; s >>= 1) {
+                Bitmap c = s == w ? colour : Scale(colour, s);
+                Bitmap a = s == w ? alphaImg : Scale(alphaImg, s);
+                byte[] cp = Pixels(c), aq = Pixels(a);
+                for (int i = 0; i < s * s; i++) cp[i * 4 + 3] = aq[i * 4];
+                bw.Write(cp);
+                if (s != w) { c.Dispose(); a.Dispose(); }
+            }
+        }
+        colour.Dispose(); alphaImg.Dispose();
+    }
+}
+'@
+function Restore-HarvickCar($game, $shell) {
+    $dir = Join-Path $game "GameData\Vehicles\2005 NEXTEL Cup\29"
+    $veh = Join-Path $dir "29.veh"
+    if (!(Test-Path -LiteralPath $veh)) { if (!$DryRun) { Warn "  29.veh not found - Kevin Harvick's car not restored" }; return }
+    Log "--- Kevin Harvick's car (#29) ---"
+    $latin1 = [Text.Encoding]::GetEncoding(28591)
+    $t = [IO.File]::ReadAllText($veh, $latin1)
+    if ($t -match 'Driver="Kevin Harvick"') { Log "  29.veh: already #29 Kevin Harvick" }
+    elseif ((Get-FileSha256 $veh) -ne $HarvickVehOem) { Warn "  29.veh is not the 2.0.2 disc's file - left as it is" }
+    elseif ($DryRun) { Log "  would set 29.veh to #29 Kevin Harvick, Richard Childress Racing" }
+    else {
+        $edits = @(@('Number=100', 'Number=29'), @('Team="NAKEEMCA High Performance"', 'Team="Richard Childress Racing"'),
+                   @('SinglePlayerTeamID=0', 'SinglePlayerTeamID=4'), @('Driver="Drafty"', 'Driver="Kevin Harvick"'),
+                   @('Chevy, SHOW_AI"', 'Chevy, AI_DRIVER, Harvick"'), @('Color=(255,65,41)', 'Color=(189,16,16)'))
+        foreach ($e in $edits) { $t = $t.Replace($e[0], $e[1]) }
+        if (!(Test-Path -LiteralPath "$veh.oem")) { Copy-Item -LiteralPath $veh -Destination "$veh.oem" }
+        [IO.File]::WriteAllText($veh, $t, $latin1)
+        Log "  29.veh: #29 Kevin Harvick, Richard Childress Racing (disc file kept as 29.veh.oem)"
+    }
+    $dds   = Join-Path $dir "29-01\29-01.dds"
+    $skin  = Join-Path $shell "Textures\CarSkin29.jpg"
+    $donor = Join-Path $game "GameData\Vehicles\2005 NEXTEL Cup\31\31-01\31-01.dds"
+    if (!(Test-Path -LiteralPath $dds)) { Warn "  29-01.dds not found - paint not rebuilt"; return }
+    if ((Test-Path -LiteralPath "$dds.oem") -and ((Get-FileSha256 $dds) -ne $HarvickDdsOem)) { Log "  29-01.dds: Harvick paint already in place"; return }
+    if ((Get-FileSha256 $dds) -ne $HarvickDdsOem) { Log "  29-01.dds: not the disc's paint (custom paint?) - left as it is"; return }
+    if (!(Test-Path -LiteralPath $skin) -or !(Test-Path -LiteralPath $donor)) { Warn "  CarSkin29.jpg or 31-01.dds missing - paint not rebuilt"; return }
+    if ($DryRun) { Log "  would rebuild 29-01.dds from Shell\Textures\CarSkin29.jpg (Shell-Pennzoil #29)"; return }
+    if (-not ("GvrSkin" -as [type])) { Add-Type -TypeDefinition $GvrSkinCs -ReferencedAssemblies System.Drawing }
+    $tmp = "$dds.new"
+    [GvrSkin]::Build($skin, $donor, $tmp)
+    if ((Get-Item -LiteralPath $tmp).Length -ne 5592532) { Remove-Item -LiteralPath $tmp -Force; Warn "  rebuilt 29-01.dds has an unexpected size - disc paint kept"; return }
+    if (!(Test-Path -LiteralPath "$dds.oem")) { Copy-Item -LiteralPath $dds -Destination "$dds.oem" }
+    Remove-Item -LiteralPath $dds -Force; [IO.File]::Move($tmp, $dds)
+    Log "  29-01.dds: Kevin Harvick's Shell-Pennzoil paint rebuilt from the menus' picture (disc paint kept as 29-01.dds.oem)"
 }
 
 # The shell's startup script runs Shell\GammaSet.exe, which calls the NVIDIA control panel
@@ -1880,6 +2013,7 @@ Repoint-ShellPaths $Shell
 Apply-BytePatches $InstallRoot
 Edit-OperatorXml $Shell
 Edit-GvrIoXml $Game
+Restore-HarvickCar $Game $Shell
 Disable-GammaSet $Shell
 Install-ClrPin $Shell
 Install-PrivateDotNet $InstallRoot $Shell
