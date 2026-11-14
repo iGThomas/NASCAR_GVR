@@ -1518,3 +1518,32 @@ use: `gacutil.exe`, `netfxupdate.exe`, `Updates\hotfix.exe`, two ASP.NET SQL tem
 The launcher sets the two variables only when `<install>\Runtime\v1.1.4322\mscorwks.dll` exists,
 so an install made before this change keeps using the .NET 1.1 in Windows. Team Racing's event
 source `GVR` (section 18) takes its messages from the private `EventLogMessages.dll`.
+
+## 20. A start-up deadlock: .NET inside Windows' DLL-loading lock (2026-11-14)
+
+Both front ends load `GvrParseXml.dll` (mixed C++/.NET, imports `mscoree.dll`) late, from a worker
+thread, through `LoadLibraryExA`. Its start-up runs managed code inside its `DllMain`, that is while
+the thread holds Windows' DLL-loading lock. On one PC (Windows 10 IoT Enterprise LTSC 2024, 24H2)
+the front end never showed a window. The launcher's freeze capture showed:
+
+- the loading thread: `AMPlayer` -> `LoadLibraryExA` -> `GvrParseXml` -> `mscoree` -> managed code ->
+  `mscorwks` -> `CoGetObjectContext` -> `CoUnmarshalInterface` -> `rpcrt4` (an RPC call waiting);
+- the I/O shim's thread waiting in `LoadLibraryA` and four new threads waiting in
+  `LdrInitializeThunk`: all queued behind the lock.
+
+CLR 1.1 asks COM for a thread's context the first time the thread runs managed code. The loading
+thread is already a single-threaded apartment (the game's own `CoInitialize`; logged with
+`CoGetApartmentType` at the load, the same with and without the change below), so it is not an
+apartment being created there. The frozen call is COM remoting (`CoUnmarshalInterface` ->
+`CoSetProxyBlanket` -> RPC); the new threads queued behind the lock are most likely COM's own helper
+threads. The same install starts normally on other PCs (Windows 10 22H2, Windows 11 25H2), with or
+without spaces in the install path.
+
+Change (an attempt): as soon as the shim is loaded, threads of its own run one complete COM round
+trip - a multithreaded apartment (kept with `CoIncrementMTAUsage`), a single-threaded helper that
+calls `CoGetObjectContext` and marshals a minimal object with `MSHCTX_LOCAL`, an unmarshal of it in
+the multithreaded apartment (a real proxy) and one call through it - and the front end's
+`LoadLibraryA` / `LoadLibraryExA` wait for that (at most 30 s; never when the caller already holds
+the loading lock). On the test PCs it takes 0-31 ms. `[Launcher] ComWarmUp=false` turns it off. The freeze capture now also logs the
+owner of the loading lock (PEB `LoaderLock`, owning thread) and 48 stack frames per thread.
+Not yet confirmed on the PC that froze.

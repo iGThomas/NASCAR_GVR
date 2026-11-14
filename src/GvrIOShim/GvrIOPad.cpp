@@ -56,6 +56,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <ctype.h>
+#include <intrin.h>
+#include <objbase.h>
 #include "GvrIOPad.h"
 #include "GvrIOWheel.h"
 
@@ -1227,6 +1229,211 @@ static void taming_hook_opengl(void)
                ? "glGetString ok" : "glGetString FAILED (OpenGL may stay greyed out on some drivers)");
 }
 
+// ---------------------------------------------- COM warm-up before the menus' .NET code runs
+// Both menu programs load GvrParseXml.dll (a mixed C++/.NET library) late, from a worker thread.
+// Its start-up runs .NET code INSIDE Windows' DLL-loading lock, and .NET's first contact with a
+// thread asks COM for that thread's context (CoGetObjectContext). On one player's PC (Windows 10 IoT
+// LTSC 24H2, 2026-11-13) that call waited forever on Windows' RPC service while the lock was held:
+// the freeze capture showed the loading thread in combase -> rpcrt4 and every other thread queued
+// behind the lock - no window, ever. So COM's remoting is exercised once first, here, on threads of
+// their own outside any DLL load (see com_warm_up_thread); the menus' DLL loads wait for that (at
+// most kWarmUpWaitMs). An ATTEMPT: not reproducible on the test PCs, not yet confirmed on that PC.
+// [Launcher] ComWarmUp=false turns it off.
+static const DWORD kWarmUpWaitMs = 30000;
+static HANDLE g_warmDone = NULL;
+static DWORD  g_warmTid  = 0;
+typedef HMODULE (WINAPI *PFN_LoadLibraryA)(LPCSTR);
+typedef HMODULE (WINAPI *PFN_LoadLibraryExA)(LPCSTR, HANDLE, DWORD);
+static PFN_LoadLibraryA   g_realLoadLibraryA   = NULL;
+static PFN_LoadLibraryExA g_realLoadLibraryExA = NULL;
+
+static bool StrStrIA_safe(const char* s, const char* sub)
+{
+    for (; *s; ++s) {
+        const char* a = s; const char* b = sub;
+        while (*a && *b && tolower((unsigned char)*a) == tolower((unsigned char)*b)) { ++a; ++b; }
+        if (!*b) return true;
+    }
+    return false;
+}
+
+// true while this thread owns Windows' DLL-loading lock (PEB+0xA0 -> RTL_CRITICAL_SECTION): a
+// LoadLibrary from inside another DLL's start-up must never wait for anything
+static bool holds_loader_lock(void)
+{
+    BYTE* peb = (BYTE*)__readfsdword(0x30);
+    RTL_CRITICAL_SECTION* cs = peb ? *(RTL_CRITICAL_SECTION**)(peb + 0xA0) : NULL;
+    return cs && (DWORD)(ULONG_PTR)cs->OwningThread == GetCurrentThreadId();
+}
+
+static void wait_warm_up(void)
+{
+    if (!g_warmDone || GetCurrentThreadId() == g_warmTid || holds_loader_lock()) return;
+    if (WaitForSingleObject(g_warmDone, 0) == WAIT_OBJECT_0) return;
+    DWORD t0 = GetTickCount();
+    DWORD r = WaitForSingleObject(g_warmDone, kWarmUpWaitMs);
+    shim_log("COM warm-up: a menus DLL load waited %lu ms for it%s", GetTickCount() - t0,
+             r == WAIT_TIMEOUT ? " - it did not finish, loading anyway" : "");
+}
+
+// The library whose .NET start-up froze: log the loading thread's COM apartment and whether the
+// warm-up had finished, so a player's log shows the order of events (normally: STA - the game's
+// own CoInitialize - and "warm-up done").
+static void note_parse_xml_load(LPCSTR n)
+{
+    if (!n || !StrStrIA_safe(n, "GvrParseXml")) return;
+    typedef HRESULT (WINAPI *PFN_Apt)(int*, int*);
+    HMODULE ole = GetModuleHandleA("ole32.dll");
+    PFN_Apt apt = ole ? (PFN_Apt)GetProcAddress(ole, "CoGetApartmentType") : NULL;
+    int t = -2, q = -2;
+    HRESULT hr = apt ? apt(&t, &q) : E_NOTIMPL;
+    const char* what = hr == (HRESULT)0x800401F0L /*CO_E_NOTINITIALIZED*/ ? "none (COM sets one up during the load)"
+                     : FAILED(hr) ? "unknown"
+                     : (t == 1 && q == 1) ? "implicit MTA"
+                     : t == 1 ? "MTA" : (t == 0 || t == 3) ? "STA" : "other";
+    shim_log("COM warm-up: %s loads on thread %lu - its COM apartment: %s (hr 0x%08lX, type %d, qualifier %d), warm-up %s",
+             n, GetCurrentThreadId(), what, (unsigned long)hr, t, q,
+             g_warmDone && WaitForSingleObject(g_warmDone, 0) == WAIT_OBJECT_0 ? "done" : "NOT done");
+}
+
+static HMODULE WINAPI hook_LoadLibraryA(LPCSTR n) { wait_warm_up(); note_parse_xml_load(n); return g_realLoadLibraryA(n); }
+static HMODULE WINAPI hook_LoadLibraryExA(LPCSTR n, HANDLE f, DWORD fl) { wait_warm_up(); note_parse_xml_load(n); return g_realLoadLibraryExA(n, f, fl); }
+
+// The thread that loads GvrParseXml.dll is already a single-threaded apartment (the game's own
+// CoInitialize - seen 2026-11-14), so the frozen call is NOT an apartment being created there. What
+// the capture shows instead is COM's remoting: CoGetObjectContext -> CoUnmarshalInterface ->
+// CoSetProxyBlanket -> an RPC call to Windows' COM service, with four new threads of the game queued
+// behind the loading lock (most likely COM's own helper threads, needed for that call). So the warm-up
+// runs one complete COM round trip before the menus load anything: a single-threaded helper thread
+// creates a tiny object, marshals it for another process's use (MSHCTX_LOCAL: COM registers the game
+// with its service and opens its RPC endpoint and threads), and this thread unmarshals it (a real
+// proxy: CoUnmarshalInterface + CoSetProxyBlanket, the frozen path) and calls through it once.
+typedef HRESULT (WINAPI *PFN_CoInitEx)(LPVOID, DWORD);
+typedef void    (WINAPI *PFN_CoUninit)(void);
+typedef HRESULT (WINAPI *PFN_CoCtx)(REFIID, LPVOID*);
+typedef HRESULT (WINAPI *PFN_CoMarshal)(IStream*, REFIID, IUnknown*, DWORD, LPVOID, DWORD);
+typedef HRESULT (WINAPI *PFN_CoUnmarshal)(IStream*, REFIID, LPVOID*);
+typedef HRESULT (WINAPI *PFN_CoRelMarshal)(IStream*);
+typedef HRESULT (WINAPI *PFN_CreateStream)(HGLOBAL, BOOL, IStream**);
+static struct { PFN_CoInitEx init; PFN_CoUninit uninit; PFN_CoCtx ctx; PFN_CoMarshal marshal;
+                PFN_CoUnmarshal unmarshal; PFN_CoRelMarshal relmarshal; PFN_CreateStream stream; } g_co;
+
+struct WarmObj : IUnknown {                                  // the smallest COM object there is
+    LONG n; WarmObj() : n(1) {}
+    HRESULT STDMETHODCALLTYPE QueryInterface(REFIID r, void** p) {
+        if (IsEqualIID(r, __uuidof(IUnknown))) { *p = this; AddRef(); return S_OK; }
+        *p = NULL; return E_NOINTERFACE;
+    }
+    ULONG STDMETHODCALLTYPE AddRef() { return (ULONG)InterlockedIncrement(&n); }
+    ULONG STDMETHODCALLTYPE Release() { LONG r = InterlockedDecrement(&n); if (!r) delete this; return (ULONG)r; }
+};
+
+struct RoundTrip { IStream* s; HANDLE marshaled, done; HRESULT hinit, hctx, hmar; };
+
+static DWORD WINAPI warm_sta_thread(LPVOID p)
+{
+    RoundTrip* r = (RoundTrip*)p;
+    r->hinit = g_co.init(NULL, COINIT_APARTMENTTHREADED);
+    IUnknown* ctx = NULL;
+    r->hctx = g_co.ctx(__uuidof(IUnknown), (LPVOID*)&ctx);   // the frozen call, on the same kind of thread
+    if (ctx) ctx->Release();
+    WarmObj* o = new WarmObj;
+    r->hmar = g_co.marshal(r->s, __uuidof(IUnknown), o, MSHCTX_LOCAL, NULL, MSHLFLAGS_NORMAL);
+    o->Release();
+    SetEvent(r->marshaled);
+    for (DWORD end = GetTickCount() + 8000; GetTickCount() < end; ) {   // serve the call from the other thread
+        if (MsgWaitForMultipleObjects(1, &r->done, FALSE, 100, QS_ALLINPUT) == WAIT_OBJECT_0) break;
+        MSG m; while (PeekMessageA(&m, NULL, 0, 0, PM_REMOVE)) { TranslateMessage(&m); DispatchMessageA(&m); }
+    }
+    if (SUCCEEDED(r->hinit)) g_co.uninit();
+    return 0;
+}
+
+static DWORD WINAPI com_warm_up_thread(LPVOID)
+{
+    DWORD t0 = GetTickCount();
+    typedef HRESULT (WINAPI *PFN_Inc)(LPVOID*);              // CoIncrementMTAUsage (Windows 8 and later)
+    HMODULE ole = LoadLibraryA("ole32.dll");
+    PFN_Inc inc = NULL;
+    if (ole) {
+        g_co.init       = (PFN_CoInitEx)GetProcAddress(ole, "CoInitializeEx");
+        g_co.uninit     = (PFN_CoUninit)GetProcAddress(ole, "CoUninitialize");
+        g_co.ctx        = (PFN_CoCtx)GetProcAddress(ole, "CoGetObjectContext");
+        g_co.marshal    = (PFN_CoMarshal)GetProcAddress(ole, "CoMarshalInterface");
+        g_co.unmarshal  = (PFN_CoUnmarshal)GetProcAddress(ole, "CoUnmarshalInterface");
+        g_co.relmarshal = (PFN_CoRelMarshal)GetProcAddress(ole, "CoReleaseMarshalData");
+        g_co.stream     = (PFN_CreateStream)GetProcAddress(ole, "CreateStreamOnHGlobal");
+        inc             = (PFN_Inc)GetProcAddress(ole, "CoIncrementMTAUsage");
+    }
+    if (!g_co.init || !g_co.uninit || !g_co.ctx || !g_co.marshal || !g_co.unmarshal || !g_co.relmarshal || !g_co.stream) {
+        SetEvent(g_warmDone);
+        shim_log("COM warm-up: ole32.dll functions missing - skipped");
+        return 0;
+    }
+    HRESULT hi = g_co.init(NULL, COINIT_MULTITHREADED);
+    LPVOID cookie = NULL;
+    HRESULT hm = inc ? inc(&cookie) : E_NOTIMPL;              // keeps the apartment after this thread
+    IUnknown* ctx = NULL;
+    HRESULT hc = g_co.ctx(__uuidof(IUnknown), (LPVOID*)&ctx);
+    if (ctx) ctx->Release();
+    DWORD tMta = GetTickCount() - t0;
+
+    // the round trip
+    RoundTrip r = { 0 };
+    HRESULT hs = g_co.stream(NULL, TRUE, &r.s), hun = E_FAIL, hcall = E_FAIL;
+    r.hinit = r.hctx = r.hmar = E_FAIL;
+    r.marshaled = CreateEventA(NULL, TRUE, FALSE, NULL);
+    r.done      = CreateEventA(NULL, TRUE, FALSE, NULL);
+    HANDLE sta = (SUCCEEDED(hs) && r.marshaled && r.done) ? CreateThread(NULL, 0, warm_sta_thread, &r, 0, NULL) : NULL;
+    if (sta && WaitForSingleObject(r.marshaled, 8000) == WAIT_OBJECT_0 && SUCCEEDED(r.hmar)) {
+        LARGE_INTEGER zero = { 0 };
+        r.s->Seek(zero, STREAM_SEEK_SET, NULL);
+        IUnknown* px = NULL;
+        hun = g_co.unmarshal(r.s, __uuidof(IUnknown), (LPVOID*)&px);   // a proxy to the helper's object
+        if (px) {
+            static const GUID kIID_IDispatch = { 0x00020400, 0, 0, { 0xC0, 0, 0, 0, 0, 0, 0, 0x46 } };
+            IUnknown* d = NULL;
+            hcall = px->QueryInterface(kIID_IDispatch, (void**)&d);     // one real call: E_NOINTERFACE = fine
+            if (d) d->Release();
+            px->Release();
+        } else {
+            LARGE_INTEGER z2 = { 0 }; r.s->Seek(z2, STREAM_SEEK_SET, NULL); g_co.relmarshal(r.s);
+        }
+    }
+    if (r.done) SetEvent(r.done);
+    if (sta) { WaitForSingleObject(sta, 9000); CloseHandle(sta); }
+    if (r.s) r.s->Release();
+    if (r.marshaled) CloseHandle(r.marshaled);
+    if (r.done) CloseHandle(r.done);
+    DWORD ms = GetTickCount() - t0;
+    SetEvent(g_warmDone);
+    shim_log("COM warm-up: multithreaded apartment in %lu ms (CoInitializeEx 0x%08lX, kept 0x%08lX, context 0x%08lX)",
+             tMta, (unsigned long)hi, (unsigned long)hm, (unsigned long)hc);
+    shim_log("COM warm-up: round trip in %lu ms - helper apartment 0x%08lX, its context 0x%08lX, marshal 0x%08lX, "
+             "unmarshal 0x%08lX, call 0x%08lX (0x80004002 = expected answer)%s",
+             ms, (unsigned long)r.hinit, (unsigned long)r.hctx, (unsigned long)r.hmar, (unsigned long)hun, (unsigned long)hcall,
+             ms > 5000 ? " - SLOW: Windows' COM service answered late on this PC" : "");
+    if (FAILED(hm)) Sleep(INFINITE);                         // no usage count (Windows 7): this thread keeps it
+    return 0;
+}
+
+static void com_warm_up_start(void)
+{
+    char ini[MAX_PATH], v[16] = "true";
+    if (shim_settings_path(ini, sizeof ini)) GetPrivateProfileStringA("Launcher", "ComWarmUp", "true", v, sizeof v, ini);
+    if (_stricmp(v, "false") == 0 || strcmp(v, "0") == 0) { early_note("COM warm-up off ([Launcher] ComWarmUp=false)"); return; }
+    g_warmDone = CreateEventA(NULL, TRUE, FALSE, NULL);
+    if (!g_warmDone) return;
+    HMODULE host = GetModuleHandleA(NULL);
+    bool a = patch_import(host, "KERNEL32.dll", "LoadLibraryA", (void*)hook_LoadLibraryA, (void**)&g_realLoadLibraryA);
+    bool b = patch_import(host, "KERNEL32.dll", "LoadLibraryExA", (void*)hook_LoadLibraryExA, (void**)&g_realLoadLibraryExA);
+    // developer override for an A/B test: hooks and the apartment line, but no warm-up
+    HANDLE t = GetEnvironmentVariableA("GVRIOSHIM_WARMUP_NO_THREAD", NULL, 0) > 0 ? NULL
+             : CreateThread(NULL, 0, com_warm_up_thread, NULL, 0, &g_warmTid);   // runs once this DLL load is over
+    if (t) CloseHandle(t); else SetEvent(g_warmDone);
+    early_note(a && b && t ? "COM warm-up ok" : "COM warm-up partly FAILED");
+}
+
 // ------------------------------------------------------------------ public
 void pad_attach(HMODULE self, bool isShell)
 {
@@ -1239,6 +1446,7 @@ void pad_attach(HMODULE self, bool isShell)
     if (isShell) taming_hook_aklog();     // 1.1: never load a 2.0.2 AKLog2 stand-in
     if (isShell) taming_hook_opengl();    // OpenGL not greyed out on drivers with new names only
     if (isShell) taming_hook_ddraw();     // DirectX device list: attached displays only, logged
+    if (isShell) com_warm_up_start();     // COM ready before GvrParseXml.dll's .NET code runs
 }
 
 // 2.0.2's GvrIO (link stamp 0x480FA1CF) reads the keyboard through DirectInput and then

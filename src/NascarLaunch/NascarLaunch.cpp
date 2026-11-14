@@ -1120,7 +1120,7 @@ static void log_thread_stacks(HANDLE proc, DWORD pid)
             sf.AddrPC.Offset = ctx.Eip;    sf.AddrPC.Mode = AddrModeFlat;
             sf.AddrFrame.Offset = ctx.Ebp; sf.AddrFrame.Mode = AddrModeFlat;
             sf.AddrStack.Offset = ctx.Esp; sf.AddrStack.Mode = AddrModeFlat;
-            for (int n = 0; n < 24 && StackWalk64(IMAGE_FILE_MACHINE_I386, proc, th, &sf, &ctx, NULL,
+            for (int n = 0; n < 48 && StackWalk64(IMAGE_FILE_MACHINE_I386, proc, th, &sf, &ctx, NULL,
                                                   SymFunctionTableAccess64, SymGetModuleBase64, NULL); ++n) {
                 DWORD64 pc = sf.AddrPC.Offset;
                 if (!pc) break;
@@ -1143,9 +1143,30 @@ static void log_thread_stacks(HANDLE proc, DWORD pid)
     logf("freeze: %d thread(s) recorded", threads);
 }
 
+// Which thread owns Windows' DLL-loading lock in the frozen program (PEB+0xA0 -> the lock,
+// +0x0C its owner): a start-up freeze is usually one thread holding it while it waits for
+// something that needs another thread. Both programs are 32-bit, like this launcher.
+static void log_loader_lock(HANDLE proc)
+{
+    typedef LONG (WINAPI *PFN_NtQIP)(HANDLE, int, PVOID, ULONG, PULONG);
+    PFN_NtQIP q = (PFN_NtQIP)GetProcAddress(GetModuleHandleA("ntdll.dll"), "NtQueryInformationProcess");
+    struct { PVOID r1; PVOID peb; PVOID r2[2]; ULONG_PTR pid; PVOID r3; } pbi = { 0 };
+    DWORD lock = 0, owner = 0, count = 0; SIZE_T got = 0;
+    if (!q || q(proc, 0 /*ProcessBasicInformation*/, &pbi, sizeof pbi, NULL) < 0 || !pbi.peb ||
+        !ReadProcessMemory(proc, (BYTE*)pbi.peb + 0xA0, &lock, 4, &got) || !lock ||
+        !ReadProcessMemory(proc, (BYTE*)(ULONG_PTR)lock + 0x0C, &owner, 4, &got) ||
+        !ReadProcessMemory(proc, (BYTE*)(ULONG_PTR)lock + 0x04, &count, 4, &got)) {
+        logf("freeze: Windows' DLL-loading lock: could not be read (%lu)", GetLastError());
+        return;
+    }
+    if (owner) logf("freeze: Windows' DLL-loading lock is HELD by thread %lu (lock count %ld)", owner, (long)count);
+    else       logf("freeze: Windows' DLL-loading lock is free");
+}
+
 static void freeze_capture(HANDLE proc, DWORD pid, const char* exe, const char* why)
 {
     logf("freeze: %s - recording what it is doing (it keeps running)", why);
+    log_loader_lock(proc);
     log_thread_stacks(proc, pid);
     const char* b = strrchr(exe, '\\'); b = b ? b + 1 : exe;
     char name[64]; lstrcpynA(name, b, sizeof name); char* dot = strrchr(name, '.'); if (dot) *dot = 0;
