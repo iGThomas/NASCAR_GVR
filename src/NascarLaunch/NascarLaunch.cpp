@@ -323,6 +323,95 @@ static bool ini_bool(const char* section, const char* key, bool def)
     return (s == "1" || s == "true" || s == "yes" || s == "on");
 }
 
+static bool read_whole(const char* path, std::string& out)
+{
+    FILE* f = fopen(path, "rb");
+    if (!f) return false;
+    char buf[8192]; size_t n; out.clear();
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) out.append(buf, n);
+    fclose(f);
+    return true;
+}
+
+// [Graphics] race options, written into the race's player profile (Game\Save\GvrSinglePlayer\
+// GvrSinglePlayer.PLR, both games) at every start - the arcade has no options screen for them, so the
+// settings file is where a player sets them. An empty value leaves the profile's own; an out-of-range one is
+// logged and skipped. The profile is player data (kept by updates); only these values are touched.
+struct PlrOption { const char* key; const char* plr; int lo, hi; };
+static const PlrOption kPlrOptions[] = {
+    { "AITextureSize",      "AI max texture size",  0, 4096 },
+    { "EnvironmentMap",     "Environment Map",      0, 1 },
+    { "CompressedTextures", "Compressed Textures",  0, 1 },
+    { "DynamicLighting",    "Dynamic Lighting",     0, 3 },
+    { "MaxVisibleCars",     "Max Visible Vehicles", 5, 48 },
+};
+
+static void apply_race_graphics(void)
+{
+    char path[MAX_PATH];
+    snprintf(path, sizeof path, "%s\\Game\\Save\\GvrSinglePlayer\\GvrSinglePlayer.PLR", g_root);
+    std::string text, orig;
+    if (!read_whole(path, text)) return;
+    orig = text;
+    std::string done;
+    for (const PlrOption& o : kPlrOptions) {
+        std::string v = ini_str("Graphics", o.key, "");
+        while (!v.empty() && isspace((unsigned char)v.back())) v.pop_back();
+        while (!v.empty() && isspace((unsigned char)v[0])) v.erase(0, 1);
+        if (v.empty()) continue;
+        char* end = NULL; long n = strtol(v.c_str(), &end, 10);
+        if (*end || n < o.lo || n > o.hi) { logf("race graphics: [Graphics] %s = '%s' is not %d to %d - skipped", o.key, v.c_str(), o.lo, o.hi); continue; }
+        // the line that starts with the option's name: <name> <tabs> = "<value>"
+        size_t at = std::string::npos, from = 0, kl = strlen(o.plr);
+        while ((from = text.find(o.plr, from)) != std::string::npos) {
+            if ((from == 0 || text[from - 1] == '\n') && (text[from + kl] == ' ' || text[from + kl] == '\t' || text[from + kl] == '=')) { at = from; break; }
+            from += kl;
+        }
+        size_t eol = at == std::string::npos ? at : text.find('\n', at);
+        size_t q1 = at == std::string::npos ? at : text.find('"', at);
+        size_t q2 = q1 == std::string::npos ? q1 : text.find('"', q1 + 1);
+        if (q2 == std::string::npos || (eol != std::string::npos && q2 > eol)) { logf("race graphics: '%s' not found in the player profile", o.plr); continue; }
+        std::string want = std::to_string(n);
+        if (text.compare(q1 + 1, q2 - q1 - 1, want) != 0) {
+            done += (done.empty() ? "" : ", ") + std::string(o.key) + " " + text.substr(q1 + 1, q2 - q1 - 1) + " -> " + want;
+            text.replace(q1 + 1, q2 - q1 - 1, want);
+        }
+    }
+    if (text == orig) return;
+    FILE* f = fopen(path, "wb");
+    if (!f) { logf("race graphics: could not write %s (%lu)", path, GetLastError()); return; }
+    fwrite(text.data(), 1, text.size(), f);
+    fclose(f);
+    logf("race graphics: %s", done.c_str());
+}
+
+// [Graphics] MaxCarDetail (NASCAR Racing): the cars' model lists (.gen) give each body part several models by
+// distance; "max" draws the most detailed one at every distance ("Force LOD A", a player's suggestion). The
+// installer keeps the disc's lists as <name>.gen.oem and makes the max-detail ones as <name>.gen.loda; the
+// chosen one is put in place at every start. Nothing to do where the installer did not prepare them.
+static void apply_car_detail(void)
+{
+    char dir[MAX_PATH];
+    snprintf(dir, sizeof dir, "%s\\Game\\GameData\\Vehicles\\2005 NEXTEL Cup", g_root);
+    const bool maxd = ini_bool("Graphics", "MaxCarDetail", false);
+    const char* gens[] = { "2005_NEXTEL_Cup.gen", "2005_NEXTEL_Cup_Fantasy.gen" };
+    int prepared = 0, copied = 0;
+    for (int i = 0; i < 2; i++) {
+        char dst[MAX_PATH], src[MAX_PATH];
+        snprintf(dst, sizeof dst, "%s\\%s", dir, gens[i]);
+        snprintf(src, sizeof src, "%s\\%s.%s", dir, gens[i], maxd ? "loda" : "oem");
+        std::string a, b;
+        if (!read_whole(src, a)) continue;
+        prepared++;
+        if (read_whole(dst, b) && a == b) continue;
+        if (CopyFileA(src, dst, FALSE)) copied++;
+        else logf("car detail: could not write %s (%lu)", dst, GetLastError());
+    }
+    if (prepared)
+        logf("car detail: %s%s", maxd ? "max - the most detailed models at every distance" : "as on the cabinet",
+             copied ? "" : " (already in place)");
+}
+
 // ---------------------------------------------------------------- settings
 
 struct Settings {
@@ -1406,6 +1495,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     check_install(s);
 
     apply_settings(s);
+    apply_car_detail();
+    apply_race_graphics();
     ensure_anark_prefs();
 
     char gameDir[MAX_PATH], shellDir[MAX_PATH], amPlayer[MAX_PATH], shellAm[MAX_PATH], gameExe[MAX_PATH];

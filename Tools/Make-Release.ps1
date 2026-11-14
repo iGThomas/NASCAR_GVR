@@ -38,6 +38,13 @@ $files = @(
     "Dependencies\DXVK\d3d9.dll"
 )
 
+# community pictures for the extra drivers (Deploy\DriverArt\Faces, Names, Numbers) and extra game files
+# such as per-car rims (Deploy\GameFiles, laid out like the Game folder): every file in those folders
+foreach ($extra in "Deploy\DriverArt", "Deploy\GameFiles") {
+    $files += @(Get-ChildItem -LiteralPath (Join-Path $repo $extra) -Recurse -File -ErrorAction SilentlyContinue |
+                ForEach-Object { $_.FullName.Substring($repo.Length + 1) })
+}
+
 if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
 if (Test-Path $zip) { Remove-Item -Force $zip }
 foreach ($f in $files) {

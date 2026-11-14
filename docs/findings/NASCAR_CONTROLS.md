@@ -157,7 +157,7 @@ Bluetooth on 2026-10-04 (`NASCAR_FINDINGS.md` §14.6).
 
 **Horn (final, 2026-10-05):** keyboard **J** or pad Circle — the cabinet NOS input (`GvrIO.xml` `name="NOS"`), stopped on release by the GvrIO shim. The `.CTL` `Control - Horn` does nothing in this build and is unbound again. (Rows above that say the horn is the `.CTL` Horn on H/J are superseded.)
 
-### 4.x Nintendo Switch Pro Controller (2026-10-11, untested on hardware)
+### 4.x Nintendo Switch Pro Controller (2026-10-11)
 
 `GvrIOPad.cpp` reads it through the same raw-HID path as the DS4 (VID `057E`, PID `2009`; the
 first HID pad found wins, XInput still comes first).
@@ -185,7 +185,7 @@ first HID pad found wins, XInput still comes first).
   USB or Bluetooth**: on a working pad the log shows `pad: Switch Pro Controller over … - full
   report mode requested` and the player-1 LED lights.
 
-### 4.y Steering wheels and force feedback (2026-10-11, untested on hardware)
+### 4.y Steering wheels and force feedback (2026-10-11)
 
 **The OEM already supports a PC force-feedback wheel.** `Steering.dll` (the GvrIO plug-in that
 `GvrIO.xml`'s `<controller type="Steering">` loads, next to both programs) has a DirectInput back

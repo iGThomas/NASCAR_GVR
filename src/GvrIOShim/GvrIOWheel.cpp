@@ -167,7 +167,7 @@ static int axis_of(const char* key, const char* s, int def)
 {
     for (int i = 0; i < 9; ++i) if (_stricmp(s, s_axName[i]) == 0) return i;
     if (_stricmp(s, "slider") == 0) return AX_S0;
-    if (_stricmp(s, "auto") == 0 && def == AX_AUTO) return AX_AUTO;
+    if (_stricmp(s, "auto") == 0) return def;     // Steering = auto: its default, x
     shim_log("wheel cfg: %s = '%s' is not an axis (x y z rx ry rz slider0 slider1%s) - ignored",
              key, s, def == AX_AUTO ? " auto" : "");
     return def;
@@ -410,7 +410,14 @@ static bool pad_like(const DevInfo& e)
     return e.type == DI8DEVTYPE_GAMEPAD || vid == 0x054C || vid == 0x057E || vid == 0x045E;
 }
 
-static bool pedal_like(const DevInfo& e) { return has_text(e.name, "pedal") || has_text(e.name, "LCM"); }
+// A pedal box by name - but never a device with force feedback, one that reports as a wheel or one
+// with "wheel" in its name: the MOZA R3 bundle calls itself "R3 Racing Wheel and Pedals" (one USB
+// device, pedals through the base) and was taken for a pedal box, so its steering was never read.
+static bool pedal_like(const DevInfo& e)
+{
+    return (has_text(e.name, "pedal") || has_text(e.name, "LCM")) &&
+           !e.ffb && e.type != DI8DEVTYPE_DRIVING && !has_text(e.name, "wheel");
+}
 static bool shifter_off(void) { return _stricmp(g_x[X_SHIFTER].filter, "none") == 0; }
 static DWORD g_savedShifter = 0;                  // VID:PID of a shifter learned earlier (shifter_load)
 static bool shifter_like(const DevInfo& e)
@@ -436,7 +443,13 @@ static int pick_wheel(const DevList& l)
         for (int i = 0; i < l.n; ++i) if (pad_like(l.d[i])) return i;
     if (g_devFilter[0]) {
         for (int i = 0; i < l.n; ++i) if (has_text(l.d[i].name, g_devFilter)) return i;
-        return -1;
+        // a Device name that matches nothing (a stale tip, a renamed device) must not lose the wheel
+        static DWORD s_warned = 0xFFFFFFFF;
+        if (s_warned != (DWORD)l.n) {
+            s_warned = (DWORD)l.n;
+            shim_log("wheel cfg: Device = '%s' matches no controller (names: the controllers: lines) - choosing "
+                     "automatically", g_devFilter);
+        }
     }
     for (int pass = 0; pass < 3; ++pass)
         for (int i = 0; i < l.n; ++i) {
@@ -533,6 +546,9 @@ static const WheelPreset g_presets[] = {
     { VP(044f, b66e), "Thrustmaster T300RS (PS3 mode)",       AX_Z,  AX_RZ, false, -1, false },
     { VP(044f, b66d), "Thrustmaster T300RS (PS4 mode)",       AX_Y,  AX_Z,  false, -1, false },
     { VP(044f, b664), "Thrustmaster TX",                      AX_Z,  AX_RZ, false, -1, false },
+    // MOZA R3 bundle ("R3 Racing Wheel and Pedals"): steering x, pedals through the base - gas z,
+    // brake rz, resting at 0 (player log 2026-11-14). Other MOZA bases: pedals learned.
+    { VP(346e, 0005), "MOZA R3",                              AX_Z,  AX_RZ, false, -1, true },
 };
 #undef VP
 

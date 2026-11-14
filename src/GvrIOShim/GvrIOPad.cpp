@@ -1238,7 +1238,7 @@ static void taming_hook_opengl(void)
 // behind the lock - no window, ever. So COM's remoting is exercised once first, here, on threads of
 // their own outside any DLL load (see com_warm_up_thread); the menus' DLL loads wait for that (at
 // most kWarmUpWaitMs). An ATTEMPT: not reproducible on the test PCs, not yet confirmed on that PC.
-// [Launcher] ComWarmUp=false turns it off.
+// [Launcher] SafeStart=false turns it off.
 static const DWORD kWarmUpWaitMs = 30000;
 static HANDLE g_warmDone = NULL;
 static DWORD  g_warmTid  = 0;
@@ -1272,7 +1272,7 @@ static void wait_warm_up(void)
     if (WaitForSingleObject(g_warmDone, 0) == WAIT_OBJECT_0) return;
     DWORD t0 = GetTickCount();
     DWORD r = WaitForSingleObject(g_warmDone, kWarmUpWaitMs);
-    shim_log("COM warm-up: a menus DLL load waited %lu ms for it%s", GetTickCount() - t0,
+    shim_log("safe start: a menus DLL load waited %lu ms for it%s", GetTickCount() - t0,
              r == WAIT_TIMEOUT ? " - it did not finish, loading anyway" : "");
 }
 
@@ -1291,7 +1291,7 @@ static void note_parse_xml_load(LPCSTR n)
                      : FAILED(hr) ? "unknown"
                      : (t == 1 && q == 1) ? "implicit MTA"
                      : t == 1 ? "MTA" : (t == 0 || t == 3) ? "STA" : "other";
-    shim_log("COM warm-up: %s loads on thread %lu - its COM apartment: %s (hr 0x%08lX, type %d, qualifier %d), warm-up %s",
+    shim_log("safe start: %s loads on thread %lu - its COM apartment: %s (hr 0x%08lX, type %d, qualifier %d), warm-up %s",
              n, GetCurrentThreadId(), what, (unsigned long)hr, t, q,
              g_warmDone && WaitForSingleObject(g_warmDone, 0) == WAIT_OBJECT_0 ? "done" : "NOT done");
 }
@@ -1349,6 +1349,53 @@ static DWORD WINAPI warm_sta_thread(LPVOID p)
     return 0;
 }
 
+// Step 2: start .NET ourselves, on this clean thread, before the menus load GvrParseXml.dll. Its
+// start-up (DllMain, inside the loading lock) then finds the runtime running instead of starting it
+// there. ICorRuntimeHost (mscoree.idl, .NET 1.x), declared here (no SDK header on the build PC):
+// IUnknown 0-2, CreateLogicalThreadState 3, DeleteLogicalThreadState 4, SwitchIn 5, SwitchOut 6,
+// LocksHeldByLogicalThread 7, MapFile 8, GetConfiguration 9, Start 10, Stop 11, CreateDomain 12,
+// GetDefaultDomain 13. mscoree.dll is Windows' own; with COMPLUS_InstallRoot / COMPLUS_Version set by
+// the launcher it loads this install's private .NET 1.1 - the same runtime the menus would load.
+struct ICorRuntimeHost_ : IUnknown {
+    virtual HRESULT STDMETHODCALLTYPE CreateLogicalThreadState() = 0;
+    virtual HRESULT STDMETHODCALLTYPE DeleteLogicalThreadState() = 0;
+    virtual HRESULT STDMETHODCALLTYPE SwitchInLogicalThreadState(DWORD*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE SwitchOutLogicalThreadState(DWORD**) = 0;
+    virtual HRESULT STDMETHODCALLTYPE LocksHeldByLogicalThread(DWORD*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE MapFile(HANDLE, HMODULE*) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetConfiguration(IUnknown**) = 0;
+    virtual HRESULT STDMETHODCALLTYPE Start() = 0;
+    virtual HRESULT STDMETHODCALLTYPE Stop() = 0;
+    virtual HRESULT STDMETHODCALLTYPE CreateDomain(LPCWSTR, IUnknown*, IUnknown**) = 0;
+    virtual HRESULT STDMETHODCALLTYPE GetDefaultDomain(IUnknown**) = 0;
+};
+
+static void clr_early_start(void)
+{
+    static const GUID kCLSID_CorRuntimeHost  = { 0xCB2F6723, 0xAB3A, 0x11D2, { 0x9C, 0x40, 0x00, 0xC0, 0x4F, 0xA3, 0x0A, 0x3E } };
+    static const GUID kIID_ICorRuntimeHost   = { 0xCB2F6722, 0xAB3A, 0x11D2, { 0x9C, 0x40, 0x00, 0xC0, 0x4F, 0xA3, 0x0A, 0x3E } };
+    typedef HRESULT (WINAPI *PFN_Bind)(LPCWSTR, LPCWSTR, DWORD, REFCLSID, REFIID, LPVOID*);
+    DWORD t0 = GetTickCount();
+    HMODULE mscoree = LoadLibraryA("mscoree.dll");
+    PFN_Bind bind = mscoree ? (PFN_Bind)GetProcAddress(mscoree, "CorBindToRuntimeEx") : NULL;
+    ICorRuntimeHost_* host = NULL;
+    HRESULT hb = bind ? bind(L"v1.1.4322", L"wks", 0x1 /*STARTUP_CONCURRENT_GC, the default*/,
+                             kCLSID_CorRuntimeHost, kIID_ICorRuntimeHost, (LPVOID*)&host) : E_NOTIMPL;
+    HRESULT hs = E_FAIL, hd = E_FAIL;
+    if (host) {
+        hs = host->Start();
+        IUnknown* dom = NULL;
+        hd = host->GetDefaultDomain(&dom);       // this thread runs .NET once: its COM context is taken here
+        if (dom) dom->Release();
+        host->Release();                         // the runtime stays loaded for the life of the process
+    }
+    char where[MAX_PATH] = "?";
+    HMODULE wks = GetModuleHandleA("mscorwks.dll");
+    if (wks) GetModuleFileNameA(wks, where, sizeof where);
+    shim_log("safe start: .NET started early in %lu ms (bind 0x%08lX, start 0x%08lX, default domain 0x%08lX) - %s",
+             GetTickCount() - t0, (unsigned long)hb, (unsigned long)hs, (unsigned long)hd, where);
+}
+
 static DWORD WINAPI com_warm_up_thread(LPVOID)
 {
     DWORD t0 = GetTickCount();
@@ -1367,7 +1414,7 @@ static DWORD WINAPI com_warm_up_thread(LPVOID)
     }
     if (!g_co.init || !g_co.uninit || !g_co.ctx || !g_co.marshal || !g_co.unmarshal || !g_co.relmarshal || !g_co.stream) {
         SetEvent(g_warmDone);
-        shim_log("COM warm-up: ole32.dll functions missing - skipped");
+        shim_log("safe start: ole32.dll functions missing - skipped");
         return 0;
     }
     HRESULT hi = g_co.init(NULL, COINIT_MULTITHREADED);
@@ -1406,10 +1453,11 @@ static DWORD WINAPI com_warm_up_thread(LPVOID)
     if (r.marshaled) CloseHandle(r.marshaled);
     if (r.done) CloseHandle(r.done);
     DWORD ms = GetTickCount() - t0;
+    clr_early_start();                                       // step 2, after COM is ready
     SetEvent(g_warmDone);
-    shim_log("COM warm-up: multithreaded apartment in %lu ms (CoInitializeEx 0x%08lX, kept 0x%08lX, context 0x%08lX)",
+    shim_log("safe start: multithreaded apartment in %lu ms (CoInitializeEx 0x%08lX, kept 0x%08lX, context 0x%08lX)",
              tMta, (unsigned long)hi, (unsigned long)hm, (unsigned long)hc);
-    shim_log("COM warm-up: round trip in %lu ms - helper apartment 0x%08lX, its context 0x%08lX, marshal 0x%08lX, "
+    shim_log("safe start: round trip in %lu ms - helper apartment 0x%08lX, its context 0x%08lX, marshal 0x%08lX, "
              "unmarshal 0x%08lX, call 0x%08lX (0x80004002 = expected answer)%s",
              ms, (unsigned long)r.hinit, (unsigned long)r.hctx, (unsigned long)r.hmar, (unsigned long)hun, (unsigned long)hcall,
              ms > 5000 ? " - SLOW: Windows' COM service answered late on this PC" : "");
@@ -1420,8 +1468,8 @@ static DWORD WINAPI com_warm_up_thread(LPVOID)
 static void com_warm_up_start(void)
 {
     char ini[MAX_PATH], v[16] = "true";
-    if (shim_settings_path(ini, sizeof ini)) GetPrivateProfileStringA("Launcher", "ComWarmUp", "true", v, sizeof v, ini);
-    if (_stricmp(v, "false") == 0 || strcmp(v, "0") == 0) { early_note("COM warm-up off ([Launcher] ComWarmUp=false)"); return; }
+    if (shim_settings_path(ini, sizeof ini)) GetPrivateProfileStringA("Launcher", "SafeStart", "true", v, sizeof v, ini);
+    if (_stricmp(v, "false") == 0 || strcmp(v, "0") == 0) { early_note("safe start off ([Launcher] SafeStart=false)"); return; }
     g_warmDone = CreateEventA(NULL, TRUE, FALSE, NULL);
     if (!g_warmDone) return;
     HMODULE host = GetModuleHandleA(NULL);
@@ -1431,7 +1479,7 @@ static void com_warm_up_start(void)
     HANDLE t = GetEnvironmentVariableA("GVRIOSHIM_WARMUP_NO_THREAD", NULL, 0) > 0 ? NULL
              : CreateThread(NULL, 0, com_warm_up_thread, NULL, 0, &g_warmTid);   // runs once this DLL load is over
     if (t) CloseHandle(t); else SetEvent(g_warmDone);
-    early_note(a && b && t ? "COM warm-up ok" : "COM warm-up partly FAILED");
+    early_note(a && b && t ? "safe start ok" : "safe start partly FAILED");
 }
 
 // ------------------------------------------------------------------ public

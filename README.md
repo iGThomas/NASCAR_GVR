@@ -89,7 +89,7 @@ folder. Advanced: the installer still takes command-line options, e.g.
 | Quit the race | hold `V` `L` `S` `M` together | hold D-pad down | hold D-pad down | hold D-pad down |
 | Operator menu | `O` | Menu (in the menus) | Options (in the menus) | − (in the menus) |
 
-**Switch Pro Controller (new, not yet tested on real hardware):** USB or Bluetooth. Buttons follow the same
+**Switch Pro Controller:** USB or Bluetooth. Buttons follow the same
 *positions* as the other pads, so A and B are swapped compared with Switch games. ZL / ZR are on/off; for
 analog gas and brake set `Pedals = rightstick` under `[Controller]` in `nascar_settings.ini`
 (right stick up = gas, down = brake). Steam can also present the pad as an Xbox controller.

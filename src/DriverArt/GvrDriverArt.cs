@@ -724,10 +724,65 @@ namespace GvrDriverArt
             return failed;
         }
 
+        // Pictures that come with the game: the installer refreshes Shell\Textures\Community (Faces, Names,
+        // Numbers) on every install and update. One replaces the player's file only while that file is
+        // still the automatic default or the community picture shipped last time (GvrDriverArt.community
+        // remembers it) - a picture the player made is never touched.
+        static void ApplyCommunity()
+        {
+            string comm = Path.Combine(tex, "Community");
+            if (!Directory.Exists(comm)) return;
+            string statePath = Path.Combine(tex, "GvrDriverArt.community");
+            var last = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+            if (File.Exists(statePath))
+                foreach (var l in File.ReadAllLines(statePath)) { int i = l.LastIndexOf('='); if (i > 0) last[l.Substring(0, i)] = l.Substring(i + 1); }
+            int applied = 0, kept = 0;
+            foreach (var d in drivers)
+                foreach (var kind in new[] { "Faces", "Names", "Numbers" })
+                {
+                    string src = Path.Combine(comm, kind, d.FileName);
+                    if (!File.Exists(src)) continue;
+                    string dst = Path.Combine(tex, kind, d.FileName), key = kind + "/" + d.FileName;
+                    try
+                    {
+                        string h = Hash(src);
+                        bool replace = !File.Exists(dst);
+                        if (!replace)
+                        {
+                            string mine = Hash(dst), prev;
+                            if (mine == h) { last[key] = h; continue; }
+                            replace = (last.TryGetValue(key, out prev) && prev == mine) || IsDefault(kind, d, dst);
+                        }
+                        if (replace) { File.Copy(src, dst, true); applied++; } else kept++;
+                        last[key] = h;
+                    }
+                    catch (Exception e) { Log.W("community picture " + key + ": " + e.Message); }
+                }
+            File.WriteAllLines(statePath, last.Select(kv => kv.Key + "=" + kv.Value).ToArray());
+            if (applied > 0 || kept > 0) Log.W("community pictures: " + applied + " applied, " + kept + " kept (made by the player)");
+        }
+
+        static string Hash(string p)
+        {
+            using (var s = System.Security.Cryptography.SHA1.Create()) return BitConverter.ToString(s.ComputeHash(File.ReadAllBytes(p))).Replace("-", "");
+        }
+
+        // true while a player's file is still what the game makes by itself
+        static bool IsDefault(string kind, Driver d, string path)
+        {
+            var img = Img.Load(path);
+            if (kind == "Faces") return SamePixels(img, FaceTemplate(d));
+            if (kind == "Numbers") return SamePixels(img, Number(d));
+            string disc = Path.Combine(tex, "DriverSelectName" + d.Name.Replace(" ", "").Replace(".", "") + ".png");
+            if (File.Exists(disc) && SamePixels(img, Img.Load(disc))) return true;
+            return SamePixels(img, PlateMaker().Compose(d.Name));
+        }
+
         // face / number sheets from Faces + Numbers; deleted files there and in Names are recreated
         static int Sheets(bool force)
         {
             int failed = 0;
+            ApplyCommunity();
             foreach (var d in drivers)
             {
                 try { if (!File.Exists(Path.Combine(tex, "Faces", d.FileName))) FaceTemplate(d).SavePng(Path.Combine(tex, "Faces", d.FileName)); }
@@ -776,7 +831,20 @@ namespace GvrDriverArt
                 { var i = new FileInfo(f); sb.Append(dir + "/" + i.Name + ":" + i.Length + ":" + i.LastWriteTimeUtc.Ticks + "|"); }
             return sb.ToString();
         }
-        static bool SamePixels(Img a, Img b) { if (a.W != b.W || a.H != b.H) return false; for (int i = 0; i < a.P.Length; i++) if (a.P[i] != b.P[i]) return false; return true; }
+        // Same picture as seen. A PNG saved through Windows drops the colour of fully transparent pixels and
+        // rounds half-transparent edge pixels by a shade (2026-11-14: a saved default differed from the same
+        // picture made in memory in ~13 edge pixels by 1, so "is this still the default?" was never true).
+        // So: invisible in both = equal, and up to 2 shades per channel = equal; a real edit differs far more.
+        static bool SamePixels(Img a, Img b)
+        {
+            if (a.W != b.W || a.H != b.H) return false;
+            for (int i = 0; i < a.P.Length; i += 4)                 // R, G, B, A per pixel
+            {
+                if (a.P[i + 3] == 0 && b.P[i + 3] == 0) continue;
+                for (int k = 0; k < 4; k++) if (Math.Abs(a.P[i + k] - b.P[i + k]) > 2) return false;
+            }
+            return true;
+        }
 
         static Img FaceTemplate(Driver d)
         {
@@ -902,6 +970,10 @@ namespace GvrDriverArt
                 "To change a picture: replace the file (same name, same size, PNG with a transparent",
                 "background) and start the game - the launcher picks up the change.",
                 "Delete a file to get the original back on the next start.",
+                "",
+                "Pictures that come with the game are in Shell\\Textures\\Community (refreshed by every",
+                "update). One is used while your file is still the automatic one; a picture you made",
+                "yourself always stays. To change a community picture, copy it here and edit the copy.",
                 "",
                 "Portraits: head and shoulders, face centred, shoulders cut off by the bottom edge,",
                 "like the 12 portraits the game already has. Until a portrait is added, the card",

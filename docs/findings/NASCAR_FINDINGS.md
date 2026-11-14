@@ -1539,11 +1539,18 @@ apartment being created there. The frozen call is COM remoting (`CoUnmarshalInte
 threads. The same install starts normally on other PCs (Windows 10 22H2, Windows 11 25H2), with or
 without spaces in the install path.
 
-Change (an attempt): as soon as the shim is loaded, threads of its own run one complete COM round
-trip - a multithreaded apartment (kept with `CoIncrementMTAUsage`), a single-threaded helper that
-calls `CoGetObjectContext` and marshals a minimal object with `MSHCTX_LOCAL`, an unmarshal of it in
-the multithreaded apartment (a real proxy) and one call through it - and the front end's
-`LoadLibraryA` / `LoadLibraryExA` wait for that (at most 30 s; never when the caller already holds
-the loading lock). On the test PCs it takes 0-31 ms. `[Launcher] ComWarmUp=false` turns it off. The freeze capture now also logs the
+A second PC (Windows 10 22H2, Portuguese) froze the same way, with the call path
+`CoGetObjectContext` -> COM's implicit `CoInitializeSecurity` -> RPC. It ran 1.2.1-beta.1, which
+used the .NET 1.1 installed in Windows, and froze with the install's own copy.
+
+Change ("safe start", not yet confirmed on those PCs): as soon as the shim is loaded, threads of its
+own (1) run one complete COM round trip - a multithreaded apartment (kept with
+`CoIncrementMTAUsage`), a single-threaded helper that calls `CoGetObjectContext` and marshals a
+minimal object with `MSHCTX_LOCAL`, an unmarshal of it in the multithreaded apartment (a real proxy)
+and one call through it - and then (2) start .NET: `CorBindToRuntimeEx("v1.1.4322", "wks")` from
+Windows' `mscoree.dll` (which loads the install's private copy), `ICorRuntimeHost::Start` and
+`GetDefaultDomain`. The front end's `LoadLibraryA` / `LoadLibraryExA` wait for both (at most 30 s;
+never when the caller already holds the loading lock), so `GvrParseXml.dll` finds COM set up and the
+runtime running. On the test PCs both steps take 0-31 ms. `[Launcher] SafeStart=false` turns it off. The freeze capture now also logs the
 owner of the loading lock (PEB `LoaderLock`, owning thread) and 48 stack frames per thread.
 Not yet confirmed on the PC that froze.
