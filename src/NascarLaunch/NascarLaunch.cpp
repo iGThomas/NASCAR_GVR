@@ -43,6 +43,7 @@
 #include <d3d.h>
 #include <dbghelp.h>
 #include <tlhelp32.h>
+#include <dxgi1_6.h>
 #include "NascarNet.h"
 
 #pragma comment(lib, "shlwapi.lib")
@@ -52,6 +53,7 @@
 static char g_root[MAX_PATH];      // install root (folder holding this exe)
 static char g_ini[MAX_PATH];       // nascar_settings.ini
 static char g_log[MAX_PATH];       // nascarlaunch.log
+static char g_title[64] = "NASCAR GVR";   // message box title: the game's name once known
 
 // ---------------------------------------------------------------- logging
 
@@ -75,7 +77,31 @@ static void die(const char* fmt, ...)
     vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
     logf("FATAL: %s", msg);
-    MessageBoxA(NULL, msg, "NASCAR Team Racing", MB_ICONERROR | MB_OK);
+    MessageBoxA(NULL, msg, g_title, MB_ICONERROR | MB_OK);
+    ExitProcess(1);
+}
+
+// The 2005-2008 programs only use "ANSI" file names: a folder name with letters outside this Windows'
+// language (Cyrillic, Greek, Asian ... on a Western Windows) reaches them as '?' and nothing starts
+// ("nascar_settings.ini was not found"). Checked with the wide API before anything else runs.
+static void check_folder_name(void)
+{
+    wchar_t w[MAX_PATH * 2];
+    DWORD n = GetModuleFileNameW(NULL, w, MAX_PATH * 2);
+    if (!n || n >= MAX_PATH * 2) return;
+    BOOL lossy = FALSE;
+    char a[MAX_PATH * 4];
+    WideCharToMultiByte(CP_ACP, WC_NO_BEST_FIT_CHARS, w, -1, a, sizeof(a), NULL, &lossy);
+    if (!lossy && n < MAX_PATH - 40) return;
+    wchar_t* slash = wcsrchr(w, L'\\'); if (slash) *slash = 0;
+    wchar_t msg[MAX_PATH * 2 + 600];
+    _snwprintf(msg, sizeof(msg) / sizeof(msg[0]),
+               L"The game cannot start from this folder:\n\n%s\n\n%s\n\nMove the whole game folder to a simple place, "
+               L"for example C:\\Games, and start it from there (or run Setup again and choose that folder).",
+               w, lossy ? L"Its name has letters this old game cannot read (only plain Latin letters, numbers, spaces "
+                          L"and _ - . work)." : L"Its path is too long for this old game.");
+    msg[sizeof(msg) / sizeof(msg[0]) - 1] = 0;
+    MessageBoxW(NULL, msg, L"NASCAR GVR", MB_ICONERROR | MB_OK);
     ExitProcess(1);
 }
 
@@ -693,6 +719,195 @@ static bool probe_d3d7(char* what, size_t n)
 // NASCAR Racing 1.1: [Display] Renderer = auto keeps Direct3D 7 wherever the game's own test passes
 // (unchanged); where it fails, OpenGL with hardware OpenGL 1.3+ (a saved ClientRenderer is used
 // without the game's test). opengl / directx force one. HKCU\Software\Anark\Client\3.0\Preferences.
+// ---------------------------------------------------------------- graphics picture
+//
+// Which graphics chips this PC has, which one drives the main screen and which one Windows calls
+// "high performance". Used to pick the right chip on two-chip PCs ([Display] Gpu) and to explain a PC
+// where neither of the menus' renderers works.
+struct GfxInfo {
+    int hw = 0;                    // hardware adapters (Windows' software renderer not counted)
+    bool basic = false;            // no graphics driver: Windows' basic display driver
+    bool laptop = false;           // has a battery
+    std::string primary;           // adapter driving the main screen
+    std::string highPerf;          // adapter Windows picks for "high performance"
+    std::string list;
+};
+static GfxInfo g_gfx;
+static bool g_gfxDone;
+
+static std::string lower_str(std::string s)
+{
+    for (size_t i = 0; i < s.size(); i++) s[i] = (char)tolower((unsigned char)s[i]);
+    return s;
+}
+
+static const GfxInfo& graphics_info(void)
+{
+    if (g_gfxDone) return g_gfx;
+    g_gfxDone = true;
+    HMODULE m = LoadLibraryA("dxgi.dll");
+    typedef HRESULT (WINAPI *CreateFactory1)(REFIID, void**);
+    CreateFactory1 cf = m ? (CreateFactory1)GetProcAddress(m, "CreateDXGIFactory1") : NULL;
+    IDXGIFactory1* f = NULL;
+    if (cf && SUCCEEDED(cf(__uuidof(IDXGIFactory1), (void**)&f)) && f) {
+        IDXGIAdapter1* a = NULL;
+        for (UINT i = 0; f->EnumAdapters1(i, &a) != DXGI_ERROR_NOT_FOUND; i++) {
+            DXGI_ADAPTER_DESC1 d;
+            if (SUCCEEDED(a->GetDesc1(&d))) {
+                char name[128];
+                WideCharToMultiByte(CP_ACP, 0, d.Description, -1, name, sizeof(name), NULL, NULL);
+                bool sw = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) || d.VendorId == 0x1414;   // Microsoft Basic Render
+                if (!sw) g_gfx.hw++;
+                g_gfx.list += std::string(g_gfx.list.empty() ? "" : ", ") + name + (sw ? " (software)" : "");
+            }
+            a->Release();
+        }
+        IDXGIFactory6* f6 = NULL;                  // Windows 10 1803+: the OS's own "high performance" choice
+        if (SUCCEEDED(f->QueryInterface(__uuidof(IDXGIFactory6), (void**)&f6)) && f6) {
+            IDXGIAdapter1* hp = NULL;
+            if (SUCCEEDED(f6->EnumAdapterByGpuPreference(0, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, __uuidof(IDXGIAdapter1), (void**)&hp)) && hp) {
+                DXGI_ADAPTER_DESC1 d;
+                if (SUCCEEDED(hp->GetDesc1(&d))) {
+                    char name[128];
+                    WideCharToMultiByte(CP_ACP, 0, d.Description, -1, name, sizeof(name), NULL, NULL);
+                    g_gfx.highPerf = name;
+                }
+                hp->Release();
+            }
+            f6->Release();
+        }
+        f->Release();
+    }
+    for (DWORD i = 0; i < 16; ++i) {
+        DISPLAY_DEVICEA dd; dd.cb = sizeof(dd);
+        if (!EnumDisplayDevicesA(NULL, i, &dd, 0)) break;
+        if (dd.StateFlags & DISPLAY_DEVICE_PRIMARY_DEVICE) { g_gfx.primary = dd.DeviceString; break; }
+    }
+    std::string p = lower_str(g_gfx.primary);
+    g_gfx.basic = g_gfx.hw == 0 || p.find("basic display") != std::string::npos || p.find("basic render") != std::string::npos;
+    SYSTEM_POWER_STATUS ps;
+    g_gfx.laptop = GetSystemPowerStatus(&ps) && ps.BatteryFlag != 128 && ps.BatteryFlag != 255;
+    logf("graphics: %s | main screen on '%s' | high performance = '%s'%s",
+         g_gfx.list.empty() ? "(none found)" : g_gfx.list.c_str(), g_gfx.primary.c_str(), g_gfx.highPerf.c_str(),
+         g_gfx.laptop ? " | laptop" : "");
+    return g_gfx;
+}
+
+// [Display] Gpu: on a PC with two graphics chips (most gaming laptops) Windows runs an unknown old program on
+// the built-in, power-saving one, whose old Direct3D 7 / OpenGL often fails the menus' test. auto = ask Windows
+// for the high-performance chip for the launcher, the menus and the race (the same setting as Windows'
+// Settings > Display > Graphics; a choice already made there is kept). high / low = always that chip;
+// windows = remove the choice again. Returns true when the launcher's own choice changed (restart it once, so
+// its graphics tests run on the chip the menus will use).
+static bool apply_gpu_preference(void)
+{
+    std::string want = lower_str(ini_str("Display", "Gpu", "auto"));
+    const char* rel[] = { "NascarLaunch.exe", "Shell\\bin\\AMPlayer.exe", "Game\\NASCAR_GVR.exe" };
+    HKEY k;
+    if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Microsoft\\DirectX\\UserGpuPreferences", 0, NULL, 0,
+                        KEY_QUERY_VALUE | KEY_SET_VALUE, NULL, &k, NULL) != ERROR_SUCCESS) return false;
+    bool launcherChanged = false;
+    if (want == "auto" && graphics_info().hw < 2) { RegCloseKey(k); return false; }   // one chip: nothing to choose
+    const char* value = want == "low" ? "GpuPreference=1;" : "GpuPreference=2;";
+    // what the launcher itself wrote, so "windows" undoes only that and never a choice the player made in Windows
+    // (section [NascarLaunch] of nascar_registry.ini: no registry key of the game maps to it)
+    char store[MAX_PATH];
+    snprintf(store, sizeof(store), "%s\\nascar_registry.ini", g_root);
+    for (int i = 0; i < 3; i++) {
+        char path[MAX_PATH], mark[8], ours[64] = "";
+        snprintf(path, sizeof(path), "%s\\%s", g_root, rel[i]);
+        snprintf(mark, sizeof(mark), "Gpu%d", i);
+        GetPrivateProfileStringA("NascarLaunch", mark, "", ours, sizeof(ours), store);
+        char have[64] = ""; DWORD t = 0, n = sizeof(have);
+        bool exists = RegQueryValueExA(k, path, NULL, &t, (BYTE*)have, &n) == ERROR_SUCCESS;
+        bool mine = exists && ours[0] && strcmp(have, ours) == 0;
+        if (want == "windows") {
+            if (mine) { RegDeleteValueA(k, path); logf("gpu: Windows decides again for %s", rel[i]); }
+            else if (exists) logf("gpu: %s keeps the choice made in Windows (%s)", rel[i], have);
+            if (ours[0]) WritePrivateProfileStringA("NascarLaunch", mark, NULL, store);
+            continue;
+        }
+        if (want == "auto" && exists) {
+            logf("gpu: %s keeps %s (%s)", rel[i], mine ? "the launcher's earlier choice" : "the choice made in Windows", have);
+            continue;
+        }
+        if (exists && strcmp(have, value) == 0) continue;
+        RegSetValueExA(k, path, 0, REG_SZ, (const BYTE*)value, (DWORD)strlen(value) + 1);
+        WritePrivateProfileStringA("NascarLaunch", mark, value, store);
+        logf("gpu: %s -> %s graphics chip", rel[i], want == "low" ? "power-saving" : "high-performance");
+        if (i == 0) launcherChanged = true;
+    }
+    RegCloseKey(k);
+    return launcherChanged;
+}
+
+// [Display] DDrawCompat: DDrawCompat (open source, 0BSD, github.com/narzoul/DDrawCompat) ships switched off as
+// Shell\bin\ddraw-compat.dll and becomes Shell\bin\ddraw.dll - which the menus then load instead of Windows' own -
+// only when needed: auto = when this PC fails both of the menus' graphics tests, on = always, off = never.
+static bool same_size(const char* a, const char* b)
+{
+    WIN32_FILE_ATTRIBUTE_DATA x, y;
+    return GetFileAttributesExA(a, GetFileExInfoStandard, &x) && GetFileAttributesExA(b, GetFileExInfoStandard, &y) &&
+           x.nFileSizeLow == y.nFileSizeLow && x.nFileSizeHigh == y.nFileSizeHigh;
+}
+
+static bool set_ddrawcompat(const char* amPlayer, bool on, const char* why)
+{
+    char dir[MAX_PATH], src[MAX_PATH], live[MAX_PATH];
+    strcpy(dir, amPlayer); PathRemoveFileSpecA(dir);
+    snprintf(src, sizeof(src), "%s\\ddraw-compat.dll", dir);
+    snprintf(live, sizeof(live), "%s\\ddraw.dll", dir);
+    bool ours = PathFileExistsA(live) && PathFileExistsA(src) && same_size(src, live);
+    if (on) {
+        if (!PathFileExistsA(src)) { logf("ddrawcompat: wanted (%s) but not in this install", why); return false; }
+        if (!ours && !CopyFileA(src, live, FALSE)) { logf("ddrawcompat: could not switch it on (%lu)", GetLastError()); return false; }
+        logf("ddrawcompat: ON for the menus (%s)", why);
+        return true;
+    }
+    if (ours) { DeleteFileA(live); logf("ddrawcompat: off (%s)", why); }
+    return false;
+}
+
+static std::string ddrawcompat_mode(void)
+{
+    std::string m = lower_str(ini_str("Display", "DDrawCompat", "auto"));
+    return (m == "on" || m == "off") ? m : "auto";
+}
+
+// Neither renderer works: name the likely cause in plain words. DDrawCompat cannot help with a missing driver,
+// a remote / virtual screen or a monitor on the wrong chip, so those always get the message.
+static void explain_no_renderer(bool compatOn)
+{
+    const GfxInfo& g = graphics_info();
+    std::string p = lower_str(g.primary);
+    const char* virt[] = { "remote display", "parsec", "virtual", "idd", "spacedesk", "meta ", "oculus", "duet",
+                           "splashtop", "sunshine", "citrix", "vmware", "virtualbox", "hyper-v", "teamviewer", "anydesk" };
+    bool isVirt = false;
+    for (size_t i = 0; i < sizeof(virt) / sizeof(virt[0]); i++) if (p.find(virt[i]) != std::string::npos) isVirt = true;
+    bool wrongChip = g.hw >= 2 && !p.empty() && !g.highPerf.empty() && lower_str(g.highPerf) != p;
+    std::string why;
+    if (g.basic)
+        why = "No graphics driver is installed: Windows uses its basic display driver. Install the driver for your "
+              "graphics card from the NVIDIA, AMD or Intel website, then start the game again.";
+    else if (isVirt)
+        why = "Your main screen is a remote or virtual display ('" + g.primary + "'). Start the game on a monitor "
+              "connected to the graphics card (close Remote Desktop, streaming or virtual-screen tools first).";
+    else if (wrongChip && !g.laptop)
+        why = "Your monitor is connected to the motherboard's built-in graphics ('" + g.primary + "'). "
+              "Plug the monitor cable into your graphics card ('" + g.highPerf + "') instead.";
+    else if (compatOn) {
+        logf("renderer: neither test passed - menus use Direct3D 7 through DDrawCompat");
+        return;
+    } else
+        why = "Your graphics driver does not offer the old Direct3D 7 or OpenGL these 2005 menus need. Update the "
+              "graphics driver. If the menus stay on \"Please Wait\", set DDrawCompat = on under [Display] in "
+              "nascar_settings.ini.";
+    logf("renderer: neither test passed - %s", why.c_str());
+    std::string msg = "The menus may stay on \"Please Wait\" on this PC: they cannot use your graphics card.\n\n" + why +
+                      "\n\nThe game starts anyway.";
+    MessageBoxA(NULL, msg.c_str(), g_title, MB_ICONWARNING | MB_OK);
+}
+
 static void choose_classic_renderer(const char* amPlayer)
 {
     if (shell_stamp(amPlayer) != 0x46AFA277) return;
@@ -700,13 +915,21 @@ static void choose_classic_renderer(const char* amPlayer)
     for (size_t i = 0; i < want.size(); i++) want[i] = (char)tolower((unsigned char)want[i]);
     char d3d[320] = "", gl[256] = "";
     int r;                                         // 3 Direct3D, 2 OpenGL, 0 = leave it to the game
+    bool none = false, compatOn = false;
+    std::string compat = ddrawcompat_mode();
     if (want == "directx") r = 3;
     else if (want == "opengl") r = 2;
     else {
         if (want != "auto") logf("renderer: [Display] Renderer = '%s' is not auto, opengl or directx - using auto", want.c_str());
         bool dx = probe_d3d7(d3d, sizeof(d3d));
         r = dx ? 0 : probe_opengl(gl, sizeof(gl)) ? 2 : 0;
+        none = !dx && r == 0;
     }
+    if (compat == "on") compatOn = set_ddrawcompat(amPlayer, true, "set in [Display] DDrawCompat");
+    else if (compat == "auto" && none) compatOn = set_ddrawcompat(amPlayer, true, "this PC fails both graphics tests");
+    else set_ddrawcompat(amPlayer, false, compat == "off" ? "set in [Display] DDrawCompat" : "not needed here");
+    if (none && compatOn) r = 3;                   // Direct3D 7 through DDrawCompat rather than software
+    if (none) explain_no_renderer(compatOn);
     HKEY k;
     if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Anark\\Client\\3.0\\Preferences", 0, NULL, 0,
                         KEY_SET_VALUE, NULL, &k, NULL) == ERROR_SUCCESS) {
@@ -726,6 +949,8 @@ static void choose_classic_renderer(const char* amPlayer)
         logf("renderer: OpenGL (%s) - this PC fails the game's Direct3D 7 test (%s)", gl, d3d);
     else if (d3d[0] && strstr(d3d, "passes"))
         logf("renderer: Direct3D 7, as on the cabinet (%s)", d3d);
+    else if (none && compatOn)
+        logf("renderer: Direct3D 7 through DDrawCompat - this PC fails both tests (Direct3D 7: %s; OpenGL: %s)", d3d, gl);
     else
         logf("renderer: WARNING - neither Direct3D 7 (%s) nor hardware OpenGL (%s): the game draws in software (very slow)", d3d, gl);
 }
@@ -793,6 +1018,17 @@ static void choose_teamracing_renderer(const char* amPlayer)
         if (want != "auto") logf("renderer: [Display] Renderer = '%s' is not auto, opengl or directx - using auto", want.c_str());
         r = probe_opengl(what, sizeof(what)) ? 2 : 3;
     }
+    bool none = false, compatOn = false;
+    if (r == 3 && want != "directx") {             // no hardware OpenGL: does Direct3D work at least?
+        char d3d[320] = "";
+        none = !probe_d3d7(d3d, sizeof(d3d));
+        if (none) logf("renderer: Direct3D test fails too (%s)", d3d);
+    }
+    std::string compat = ddrawcompat_mode();
+    if (compat == "on") compatOn = set_ddrawcompat(amPlayer, true, "set in [Display] DDrawCompat");
+    else if (compat == "auto" && none) compatOn = set_ddrawcompat(amPlayer, true, "this PC fails both graphics tests");
+    else set_ddrawcompat(amPlayer, false, compat == "off" ? "set in [Display] DDrawCompat" : "not needed here");
+    if (none) explain_no_renderer(compatOn);
     HKEY k;
     if (RegCreateKeyExA(HKEY_CURRENT_USER, "Software\\Anark\\Client\\4.0\\Preferences", 0, NULL, 0,
                         KEY_SET_VALUE, NULL, &k, NULL) == ERROR_SUCCESS) {
@@ -1197,6 +1433,16 @@ static void session_report(void)
         FindClose(f);
     }
     if (copied) logf("race traces of this session copied to LOG\\race-trace*.txt: %d", copied);
+    // DDrawCompat writes its own log next to the menus: copy this session's into LOG, which is what players send
+    {
+        char src[MAX_PATH], dst[MAX_PATH];
+        snprintf(src, sizeof(src), "%s\\Shell\\bin\\DDrawCompat-AMPlayer.log", g_root);
+        snprintf(dst, sizeof(dst), "%s\\LOG\\ddrawcompat-AMPlayer.log", g_root);
+        WIN32_FILE_ATTRIBUTE_DATA fa;
+        if (GetFileAttributesExA(src, GetFileExInfoStandard, &fa) && CompareFileTime(&fa.ftLastWriteTime, &g_sessionStartFt) >= 0 &&
+            CopyFileA(src, dst, FALSE))
+            logf("DDrawCompat's log of this session copied to LOG\\ddrawcompat-AMPlayer.log");
+    }
     // Windows' crash records (they arrive a moment after the exit)
     Sleep(3000);
     SYSTEMTIME now; GetLocalTime(&now);
@@ -1385,9 +1631,69 @@ static void freeze_watch_start(HANDLE proc, DWORD pid, const char* exe)
     if (th) CloseHandle(th); else { CloseHandle(c->proc); delete c; }
 }
 
-static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, const Settings& s,
-                 const char* preload = NULL)
+// ---------------------------------------------------------------- Smart App Control / Code Integrity
+//
+// Windows 11's Smart App Control (and company code-integrity policies) can refuse to load the game's unsigned
+// files. The program then fails with no message of its own. After each session the launcher reads Windows'
+// Code Integrity log for blocks of files inside the install folder, logs them, and explains them once.
+static const char* sac_state_text(void)
 {
+    DWORD v = 0, n = sizeof(v);
+    if (RegGetValueA(HKEY_LOCAL_MACHINE, "SYSTEM\\CurrentControlSet\\Control\\CI\\Policy",
+                     "VerifiedAndReputablePolicyState", RRF_RT_REG_DWORD, NULL, &v, &n) != ERROR_SUCCESS) return "not on this Windows";
+    return v == 0 ? "off" : v == 1 ? "ON (blocks unsigned programs)" : v == 2 ? "evaluation (watches, does not block)" : "unknown state";
+}
+
+static void check_blocked_files(ULONGLONG sessionMs)
+{
+    // Windows names files as \Device\HarddiskVolumeN\...: translate the install folder's drive the same way
+    char drive[3] = { g_root[0], ':', 0 }, dev[MAX_PATH] = "";
+    if (g_root[1] != ':' || !QueryDosDeviceA(drive, dev, sizeof(dev))) return;
+    std::string want = lower_str(std::string(dev) + (g_root + 2)) + "\\";
+    char cmd[400];
+    snprintf(cmd, sizeof(cmd), "wevtutil.exe qe Microsoft-Windows-CodeIntegrity/Operational /rd:true /c:60 /f:text "
+             "\"/q:*[System[(EventID=3033 or EventID=3034 or EventID=3076 or EventID=3077) and TimeCreated[timediff(@SystemTime) <= %llu]]]\"",
+             sessionMs + 60000);
+    std::string ev = run_capture(cmd);
+    std::string firstBlocked;
+    std::vector<std::pair<std::string, int> > files;      // "BLOCKED x.dll" -> how often
+    int shown = 0;
+    for (size_t pos = 0; (pos = ev.find("Event[", pos)) != std::string::npos; ) {
+        size_t end = ev.find("Event[", pos + 6);
+        std::string one = ev.substr(pos, end == std::string::npos ? std::string::npos : end - pos);
+        pos = end == std::string::npos ? ev.size() : end;
+        std::string low = lower_str(one);
+        size_t at = low.find(want);
+        size_t load = low.find("attempted to load ");
+        if (at == std::string::npos || load == std::string::npos) continue;
+        size_t fs = load + 18, fe = low.find(" that ", fs);
+        std::string file = one.substr(fs, fe == std::string::npos ? std::string::npos : fe - fs);
+        if (lower_str(file).find(want) == 0) file = file.substr(want.size());      // relative to the install folder
+        bool blocked = low.find("event id: 3033") != std::string::npos || low.find("event id: 3077") != std::string::npos;
+        std::string key = std::string(blocked ? "BLOCKED " : "would block (audit only) ") + file;
+        size_t k = 0;
+        while (k < files.size() && files[k].first != key) k++;
+        if (k == files.size()) files.push_back(std::make_pair(key, 0));
+        files[k].second++;
+        ++shown;
+        if (blocked && firstBlocked.empty()) firstBlocked = file;
+    }
+    if (!shown) return;
+    for (size_t k = 0; k < files.size() && k < 8; k++)
+        logf("windows code integrity: %s (%d time%s)", files[k].first.c_str(), files[k].second, files[k].second == 1 ? "" : "s");
+    logf("windows code integrity: Smart App Control is %s", sac_state_text());
+    if (firstBlocked.empty()) return;
+    std::string msg = "Windows blocked a file of the game, so it could not run properly:\n\n    " + firstBlocked +
+        "\n\nThis is done by Windows' Smart App Control (or a company security policy) because the game's files are "
+        "not signed. Smart App Control is in Windows Security > App & browser control.\n\n"
+        "Note: once Smart App Control is turned off, Windows can only turn it on again by reinstalling Windows.";
+    MessageBoxA(NULL, msg.c_str(), g_title, MB_ICONWARNING | MB_OK);
+}
+
+static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, const Settings& s,
+                 const char* preload = NULL, const char* selfLoadFallback = NULL)
+{
+    ULONGLONG started = GetTickCount64();
     std::string cmdline = std::string("\"") + exe + "\" " + args;
     STARTUPINFOA si = { sizeof(si) };
     PROCESS_INFORMATION pi = { 0 };
@@ -1399,6 +1705,26 @@ static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, 
         die("Could not start:\n%s\n\nWindows error %lu.", exe, GetLastError());
     }
     if (preload) { preload_dll(pi, preload); ResumeThread(pi.hThread); }
+    if (selfLoadFallback) {
+        // Shell\bin\glu32.dll signals once the menus loaded the shim by themselves. Without that signal
+        // (the helper skipped or blocked), start the menus again the older way, with injection.
+        char name[64];
+        snprintf(name, sizeof(name), "Local\\GvrGlu_loaded_%lu", pi.dwProcessId);
+        bool ok = false;
+        for (int i = 0; i < 100 && !ok; i++) {
+            HANDLE e = OpenEventA(SYNCHRONIZE, FALSE, name);
+            if (e) { CloseHandle(e); ok = true; break; }
+            if (WaitForSingleObject(pi.hProcess, 100) != WAIT_TIMEOUT) break;
+        }
+        if (ok) logf("shim: loaded by the menus themselves");
+        else {
+            logf("shim: the menus did not load GvrIO.dll themselves within 10 s - starting them again with injection");
+            TerminateProcess(pi.hProcess, 1);
+            WaitForSingleObject(pi.hProcess, 5000);
+            CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+            return run(exe, args, cwd, wait, s, selfLoadFallback, NULL);
+        }
+    }
     if (wait) freeze_watch_start(pi.hProcess, pi.dwProcessId, exe);
     give_focus(pi.dwProcessId);
     DWORD code = 0;
@@ -1416,11 +1742,67 @@ static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, 
     }
     CloseHandle(pi.hThread);
     CloseHandle(pi.hProcess);
-    if (wait) restore_taskbar();
+    if (wait) { restore_taskbar(); check_blocked_files(GetTickCount64() - started); }
     return code;
 }
 
 // ---------------------------------------------------------------- main
+
+// [Display] HudText: the race places its HUD pictures as fractions of the screen, but draws its text with fonts of a
+// fixed point size (Game\GameData\HUD\HUD.ini, "elem=FONT ... SIZE=n", made for the arcade's 768-pixel-high screen).
+// So the text shrank on bigger screens. At every start the launcher writes HUD.ini from the original (kept as
+// HUD.ini.oem) with each font SIZE times the race height / 768. The race renders each new size once and keeps it
+// as "<font>-<size>-400.bmp/.fnt" next to HUD.ini (tested up to 169 points: sharp, all characters).
+// auto = grow with the screen, original = the arcade's sizes, or a number such as 1.5 = that many times the arcade's.
+static void apply_hud_text(const Settings& s)
+{
+    char hud[MAX_PATH], oem[MAX_PATH];
+    snprintf(hud, sizeof hud, "%s\\Game\\GameData\\HUD\\HUD.ini", g_root);
+    snprintf(oem, sizeof oem, "%s.oem", hud);
+    if (!PathFileExistsA(hud)) return;
+    if (!PathFileExistsA(oem) && !CopyFileA(hud, oem, TRUE)) { logf("hud text: could not keep the original HUD.ini (%lu)", GetLastError()); return; }
+    std::string want = lower_str(ini_str("Display", "HudText", "auto"));
+    double f = 1.0;
+    if (want == "auto" || want.empty()) f = s.height / 768.0;
+    else if (want != "original") {
+        char* end = NULL; double v = strtod(want.c_str(), &end);
+        if (end && !*end && v >= 0.25 && v <= 4.0) f = v;
+        else { logf("hud text: [Display] HudText = '%s' is not auto, original or a number from 0.25 to 4 - using auto", want.c_str()); f = s.height / 768.0; }
+    }
+    if (f > 4.0) f = 4.0;
+    std::string text, cur;
+    if (!read_whole(oem, text)) return;
+    read_whole(hud, cur);
+    // each "elem=FONT" line: SIZE=n -> SIZE=round(n*f)
+    std::string out; out.reserve(text.size() + 64);
+    int changed = 0;
+    for (size_t pos = 0; pos < text.size(); ) {
+        size_t eol = text.find('\n', pos); if (eol == std::string::npos) eol = text.size(); else eol++;
+        std::string line = text.substr(pos, eol - pos);
+        pos = eol;
+        if (line.compare(0, 9, "elem=FONT") == 0) {
+            size_t k = line.find("SIZE=");
+            if (k != std::string::npos) {
+                size_t d = k + 5, e = d;
+                while (e < line.size() && isdigit((unsigned char)line[e])) e++;
+                if (e > d) {
+                    int n = atoi(line.substr(d, e - d).c_str());
+                    int m = (int)(n * f + 0.5); if (m < 8) m = 8;
+                    if (m != n) changed++;
+                    char num[16]; snprintf(num, sizeof num, "%d", m);
+                    line = line.substr(0, d) + num + line.substr(e);
+                }
+            }
+        }
+        out += line;
+    }
+    if (out == cur) return;
+    FILE* fp = fopen(hud, "wb");
+    if (!fp) { logf("hud text: could not write HUD.ini (%lu)", GetLastError()); return; }
+    fwrite(out.data(), 1, out.size(), fp);
+    fclose(fp);
+    logf("hud text: race fonts x%.2f for a %d-pixel-high race (%d sizes changed; [Display] HudText = %s)", f, s.height, changed, want.c_str());
+}
 
 // ---------------------------------------------------------------- install guard
 //
@@ -1472,11 +1854,10 @@ static void check_install(const Settings& s)
         // explanation. Installed per machine by Install.bat - copying the folder does not bring it.
         char rt[MAX_PATH];
         if (s.mode != "race" && !dotnet11_installed() && !private_runtime(rt, sizeof(rt)))
-            die("NASCAR Team Racing is not fully set up on this PC.\n\n"
-                "Microsoft .NET Framework 1.1, which the game's menus need, was not found\n"
-                "(C:\\Windows\\Microsoft.NET\\Framework\\v1.1.4322).\n\n"
-                "It is installed for you by Install.bat - copying the game folder by hand\n"
-                "does not install it. Please run Install.bat once, then start the game again.");
+            die("%s is not fully set up on this PC.\n\n"
+                "The copy of Microsoft .NET 1.1 that the menus use (the Runtime folder in the game folder)\n"
+                "is missing. Run Setup (or Install.bat) again - it puts it back. Copying the game folder\n"
+                "by hand from another PC is not enough.", g_title);
         return;
     }
     die("NASCAR Team Racing cannot start: %d file(s) are missing from\n%s\n\n%s\n"
@@ -1544,9 +1925,15 @@ static unsigned long mp_launch(const std::string& args)
 
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
 {
+    check_folder_name();                       // before any ANSI file name is used
     GetModuleFileNameA(NULL, g_root, MAX_PATH);
     PathRemoveFileSpecA(g_root);
     snprintf(g_ini, sizeof(g_ini), "%s\\nascar_settings.ini", g_root);
+    {
+        char amp[MAX_PATH];
+        snprintf(amp, sizeof(amp), "%s\\Shell\\bin\\AMPlayer.exe", g_root);
+        if (PathFileExistsA(amp)) strcpy(g_title, is_teamracing_shell(amp) ? "NASCAR Team Racing" : "NASCAR Racing");
+    }
     // developer override (two players on one PC for tests): --settings <file> reads another settings file
     if (const char* so = strstr(cmdline, "--settings ")) {
         so += 11;
@@ -1581,6 +1968,18 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
 
     Settings s;
     load_settings(s);
+    // [Display] Gpu before any graphics test. When the launcher's own chip changed, start it once more so the
+    // tests below run on the chip the menus will get (Windows applies the choice when a program starts).
+    if (apply_gpu_preference() && !GetEnvironmentVariableA("GVRLAUNCH_GPU_RESTARTED", NULL, 0)) {
+        SetEnvironmentVariableA("GVRLAUNCH_GPU_RESTARTED", "1");
+        std::string self = GetCommandLineA();
+        STARTUPINFOA rsi = { sizeof(rsi) }; PROCESS_INFORMATION rpi = { 0 };
+        if (CreateProcessA(NULL, &self[0], NULL, NULL, FALSE, 0, NULL, NULL, &rsi, &rpi)) {
+            logf("gpu: restarting the launcher once so it runs on the chosen graphics chip");
+            CloseHandle(rpi.hThread); CloseHandle(rpi.hProcess);
+            return 0;
+        }
+    }
     check_install(s);
     std::string mpMode = ini_str("Multiplayer", "Mode", "off");
     for (size_t i = 0; i < mpMode.size(); i++) mpMode[i] = (char)tolower((unsigned char)mpMode[i]);
@@ -1589,6 +1988,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     apply_settings(s);
     apply_car_detail();
     apply_race_graphics();
+    apply_hud_text(s);
     ensure_anark_prefs();
 
     char gameDir[MAX_PATH], shellDir[MAX_PATH], amPlayer[MAX_PATH], shellAm[MAX_PATH], gameExe[MAX_PATH];
@@ -1611,6 +2011,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     const bool diag = ini_bool("Debug", "Log", false);
     g_diag = diag;                             // also arms the freeze capture in run()
     if (diag) debug_capture_start();
+    logf("smart app control: %s", sac_state_text());
 
     if (mp) {
         // [Multiplayer]: a linked race, straight in (no menus); NascarNet.cpp does the lobby and relay
@@ -1656,7 +2057,20 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     snprintf(binDir, sizeof(binDir), "%s\\bin", shellDir);
     char shim[MAX_PATH];                       // the GvrIO shim: private registry, pad, fixes
     snprintf(shim, sizeof(shim), "%s\\GvrIO.dll", binDir);
-    run(amPlayer, args, binDir, s.waitForExit || s.borderless, s, PathFileExistsA(shim) ? shim : NULL);
+    // Shell\bin\glu32.dll (ours) makes the menus load the shim by themselves, before their first instruction:
+    // no injection, which some antivirus programs block. The older injection is the fallback, and
+    // [Launcher] Preload = inject forces it (support).
+    char glu[MAX_PATH]; std::string gbin;
+    snprintf(glu, sizeof(glu), "%s\\glu32.dll", binDir);
+    bool selfLoad = read_whole(glu, gbin) && gbin.find("GvrGlu: loads GvrIO.dll into the menus") != std::string::npos;
+    std::string how = lower_str(ini_str("Launcher", "Preload", "auto"));
+    if (how == "inject") selfLoad = false;
+    if (PathFileExistsA(shim))
+        logf(selfLoad ? "shim: the menus load GvrIO.dll themselves (Shell\\bin\\glu32.dll)"
+                      : "shim: injecting GvrIO.dll into the menus%s", how == "inject" ? " ([Launcher] Preload = inject)" : "");
+    bool haveShim = PathFileExistsA(shim) != FALSE;
+    run(amPlayer, args, binDir, s.waitForExit || s.borderless, s, haveShim && !selfLoad ? shim : NULL,
+        haveShim && selfLoad ? shim : NULL);
     if (diag && (s.waitForExit || s.borderless)) session_report();
     return 0;
 }

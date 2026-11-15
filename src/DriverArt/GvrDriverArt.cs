@@ -613,7 +613,7 @@ namespace GvrDriverArt
     // ---------------------------------------------------------------- one extra driver
     class Driver
     {
-        public string Num, Make, Donor, ColourSlot, Name, Info, TrFace; public int Cell, Tol, Sample, WithLine; public int[] Fill, Line;
+        public string Num, Make, Donor, ColourSlot, Name, Info, TrFace, CardColour; public int Cell, Tol, Sample, WithLine; public int[] Fill, Line;
         public string FileName { get { return Num + " " + Name.TrimEnd('.') + ".png"; } }
     }
     class Donor { public string Slot, Num; public int FaceOff, NumOff; }
@@ -671,7 +671,8 @@ namespace GvrDriverArt
                     {
                         Num = f[1], Make = f[2], Donor = f[3], Cell = int.Parse(f[4]), ColourSlot = f[5], Name = f[6], Info = f[7], TrFace = f[8],
                         Fill = f[9].Split(',').Select(int.Parse).ToArray(), Line = f[10].Split(',').Select(int.Parse).ToArray(),
-                        Tol = int.Parse(f[11]), Sample = int.Parse(f[12]), WithLine = int.Parse(f[13])
+                        Tol = int.Parse(f[11]), Sample = int.Parse(f[12]), WithLine = int.Parse(f[13]),
+                        CardColour = f.Length > 14 ? CleanRgb(f[14]) : ""     // card colour R,G,B; empty = the borrowed slot's
                     });
             }
             if (drivers.Count == 0) throw new Exception("no drivers in " + path);
@@ -712,7 +713,7 @@ namespace GvrDriverArt
             {
                 if (!File.Exists(Path.Combine(tex, "Names", d.FileName))) continue;
                 n++;
-                string e = string.Join(";", new[] { d.Num, d.Donor, d.Make, "Names\\" + d.FileName, d.ColourSlot, d.Info, d.Cell.ToString(), donors[d.Donor].Num });
+                string e = string.Join(";", new[] { d.Num, d.Donor, d.Make, "Names\\" + d.FileName, d.ColourSlot, d.Info, d.Cell.ToString(), donors[d.Donor].Num, d.CardColour });
                 WritePrivateProfileString(sec, "ExtraDriver" + n, "\"" + e + "\"", reg);
             }
             for (int k = n + 1; k <= 60; k++)
@@ -760,6 +761,14 @@ namespace GvrDriverArt
                 }
             File.WriteAllLines(statePath, last.Select(kv => kv.Key + "=" + kv.Value).ToArray());
             if (applied > 0 || kept > 0) Log.W("community pictures: " + applied + " applied, " + kept + " kept (made by the player)");
+        }
+
+        // "R,G,B" with each 0-255, else "" (a typo never breaks the menus)
+        static string CleanRgb(string s)
+        {
+            var v = s.Split(',').Select(x => x.Trim()).ToArray(); int n;
+            if (v.Length != 3 || !v.All(x => int.TryParse(x, out n) && n >= 0 && n <= 255)) return "";
+            return string.Join(",", v);
         }
 
         static string Hash(string p)

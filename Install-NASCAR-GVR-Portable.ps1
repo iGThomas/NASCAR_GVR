@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-11-15-nascar-portable-4.25" # 4.25: release v1.2.2-beta.4 - crew chiefs for the 19 extra drivers; nascar_settings.ini in a clearer layout (one note per setting); an update rewrites the player's file in it and keeps every value (Rebuild-Settings). multiplayer (beta): [Multiplayer] Mode=lobby links the arcade menus through an internet relay server (new GvrLinking.dll replaces the IPX original, kept as .oem; NascarLaunch.exe turns the link plug-in on only in lobby mode; NASCAR_Selection.am: the menus' send call restored, cabinet number from the link, Lobby cards show each player's own driver incl. extra drivers; [Multiplayer] PlayerName on the Lobby cards and, through the GvrIO shim, on the cars in the race; GvrIO shim maps the race's -client address to the local link; GvrDriverArt.exe writes single Lobby pictures), Mode=host/join goes straight into a race through the relay or on the same network (rebuilt NascarLaunch.exe, GvrIO.dll, GvrDriverArt.exe); the menus no longer hang on the "game crashed" screen after Alt+F4 or a race crash (Launch_Game_Error.am returns to the attract). [Graphics] AITextureSize defaults to 0 (no size limit for computer cars' paint: the disc's paints are 512 anyway, and a custom paint without mipmaps can no longer crash the race); a settings file still holding beta.3's default 512 under beta.3's comment is switched to 0 once (Update-OldDefaults), a value the player chose is kept. 4.24: release v1.2.2-beta.3 - safe start: before the menus load anything the GvrIO shim prepares COM (one round trip) and starts the install's .NET 1.1 itself on a clean thread ([Launcher] SafeStart, on by default; replaces beta.2's ComWarmUp, a leftover ComWarmUp line does nothing); MOZA R3 bundle steering (a wheel-and-pedals device is no longer taken for a pedal box) (rebuilt GvrIO.dll); community pictures for the extra drivers (new number plates for all 19 and a Kevin Harvick portrait, Deploy\DriverArt -> Shell\Textures\Community; the picture builder uses one while the player's file is still the automatic one or the previous release's, a player's own picture stays; Team Racing portraits for placeholder faces now really used) (rebuilt GvrDriverArt.exe); extra game files (Deploy\GameFiles -> Game, e.g. blue rims for the #2 car: Dodge\2\2-01\2-01rims.bmp, which the race reads after the shared wcrims.bmp; disc files never replaced, list in Game\gvr-gamefiles.txt); [Graphics] race options in nascar_settings.ini: MaxCarDetail (Force LOD A: the installer keeps the disc's car model lists as .gen.oem and makes max-detail ones as .gen.loda, the launcher puts the chosen one in place) and AITextureSize, EnvironmentMap, CompressedTextures, DynamicLighting, MaxVisibleCars written into the race's player profile at every start (rebuilt NascarLaunch.exe). 4.23: release v1.2.2-beta.2 - ATTEMPT against a menus start-up freeze (no window) seen on one PC: a menus library starts .NET inside Windows' DLL-loading lock and a COM call waited there; the GvrIO shim now runs one COM round trip first ([Launcher] ComWarmUp, on by default; not yet confirmed on that PC); freeze capture names the owner of Windows' DLL-loading lock and records deeper stacks (rebuilt GvrIO.dll, NascarLaunch.exe). 4.22: release v1.2.2-beta.1 - shortcut and Programs and Features show the NASCAR Racing logo (NASCAR_Racing.ico); the 19 race cars on the disc without a driver select slot are playable drivers (Harvick, Martin, Nemechek, ...): portraits (placeholders with the name and number; Team Racing's where it is installed), name plates, numbers and leaderboard badges built on this PC from the disc by Tools\GvrDriverArt.exe; players can replace them in Shell\Textures\Faces, Names, Numbers (kept as player data, rebuilt by NascarLaunch.exe at start when changed); [Cabinet] ExtraDrivers=false keeps the 12 originals; leaderboard badge shown for every car, #01 and #1 kept apart (rebuilt NascarLaunch.exe). 4.21: release v1.2.1 - an existing install is found and offered for update (Programs and Features entry, shortcuts, usual folders); each install gets a Programs and Features entry with a working Uninstall (asks first, keeps the player data in Documents; uninstaller copy in <install>\Setup); the script asks Windows for administrator rights itself; the one-file NASCAR-GVR-<version>-Setup.exe runs it. .NET 1.1 is no longer installed into Windows: the installer unpacks .NET 1.1 SP1 into <install>\Runtime (and its libraries next to AMPlayer.exe), run-tests it there, and NascarLaunch.exe starts the menus on that private copy (rebuilt NascarLaunch.exe). Fixes clean PCs where the SP1 package could not even unpack (it needs an older .NET to run) and PCs whose Windows .NET 1.1 was damaged; -RepairDotNet now unpacks the private copy again. 4.20: release v1.2.1-beta.4 - [Display] Renderer now also chooses the NASCAR Racing menus' renderer: auto keeps Direct3D 7 where the game's own test passes and uses OpenGL where it fails (there the game greyed out both and drew in software: a frozen "Please Wait"); with [Debug] Log=true the PC's full DirectX 7 picture and the game's own renderer verdict are logged (rebuilt NascarLaunch.exe, GvrIO.dll). 4.19: release v1.2.1-beta.3 - rebuilt NascarLaunch.exe (Team Racing event-source check; no change for NASCAR Racing). 4.18: release v1.2.1-beta.2 - with [Debug] Log=true the LOG folder also gets the menus' and the race's own messages (debug-output.log), the race engine's traces, Windows' crash records for the game, overlay / hook DLLs loaded into the game and the GPU the menus draw with (rebuilt NascarLaunch.exe, GvrIO.dll). 4.17: release v1.2.1-beta.1 - a generic USB H-shifter is recognised from two held gears and remembered (nascar_calibration.ini [Shifter]), a direct-drive base held by another program is still read for steering, the transmission screen follows a PC wheel found late, the front end never loads NASCAR Team Racing's AKLog2 stand-in, no crash on closing the front end, DirectX device list limited to attached displays and logged (rebuilt GvrIO.dll, NascarLaunch.exe: screens in the PC log). 4.16: release v1.2.0 (NASCAR Racing 1.1.1; one zip with NASCAR Team Racing - Install.bat asks which game) - runs on any Windows region format (the attract never loaded on day/month Windows; the shell now runs as en-US), the game can never restart the PC (nightly restart check patched off in NASCARPlugIn.dll + restart calls blocked), race display modes up to 16384 pixels (5120x1440), wheels with pedals / a gear shifter / a separate rim or button boxes on their own USB cables, set up automatically (pedals and shifter type learned from use, PC pedals calibrated on the arcade's own screen and saved in nascar_calibration.ini (kept as player data); [Wheel] overrides), database password masked in the log, region format in the launcher log (rebuilt GvrIO.dll, NascarLaunch.exe, GvrSqlite.dll). 4.15: default folder NASCAR_GVR_1.1 and desktop/start shortcut "NASCAR Racing" (was "NASCAR Team Racing") so the 1.1 and 2.0.2 editions install side by side without clashing; the old shortcut is migrated on install and uninstall. 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
+$Version = "2026-11-15-nascar-portable-4.26" # 4.26: release v1.2.2-beta.5 - menus loader glu32.dll (no injection), DDrawCompat helper installed switched off, install-folder check, uninstall removes the graphics-chip choices, settings: Gpu, DDrawCompat, HudText, Preload. 4.25: release v1.2.2-beta.4 - crew chiefs for the 19 extra drivers; nascar_settings.ini in a clearer layout (one note per setting); an update rewrites the player's file in it and keeps every value (Rebuild-Settings). multiplayer (beta): [Multiplayer] Mode=lobby links the arcade menus through an internet relay server (new GvrLinking.dll replaces the IPX original, kept as .oem; NascarLaunch.exe turns the link plug-in on only in lobby mode; NASCAR_Selection.am: the menus' send call restored, cabinet number from the link, Lobby cards show each player's own driver incl. extra drivers; [Multiplayer] PlayerName on the Lobby cards and, through the GvrIO shim, on the cars in the race; GvrIO shim maps the race's -client address to the local link; GvrDriverArt.exe writes single Lobby pictures), Mode=host/join goes straight into a race through the relay or on the same network (rebuilt NascarLaunch.exe, GvrIO.dll, GvrDriverArt.exe); the menus no longer hang on the "game crashed" screen after Alt+F4 or a race crash (Launch_Game_Error.am returns to the attract). [Graphics] AITextureSize defaults to 0 (no size limit for computer cars' paint: the disc's paints are 512 anyway, and a custom paint without mipmaps can no longer crash the race); a settings file still holding beta.3's default 512 under beta.3's comment is switched to 0 once (Update-OldDefaults), a value the player chose is kept. 4.24: release v1.2.2-beta.3 - safe start: before the menus load anything the GvrIO shim prepares COM (one round trip) and starts the install's .NET 1.1 itself on a clean thread ([Launcher] SafeStart, on by default; replaces beta.2's ComWarmUp, a leftover ComWarmUp line does nothing); MOZA R3 bundle steering (a wheel-and-pedals device is no longer taken for a pedal box) (rebuilt GvrIO.dll); community pictures for the extra drivers (new number plates for all 19 and a Kevin Harvick portrait, Deploy\DriverArt -> Shell\Textures\Community; the picture builder uses one while the player's file is still the automatic one or the previous release's, a player's own picture stays; Team Racing portraits for placeholder faces now really used) (rebuilt GvrDriverArt.exe); extra game files (Deploy\GameFiles -> Game, e.g. blue rims for the #2 car: Dodge\2\2-01\2-01rims.bmp, which the race reads after the shared wcrims.bmp; disc files never replaced, list in Game\gvr-gamefiles.txt); [Graphics] race options in nascar_settings.ini: MaxCarDetail (Force LOD A: the installer keeps the disc's car model lists as .gen.oem and makes max-detail ones as .gen.loda, the launcher puts the chosen one in place) and AITextureSize, EnvironmentMap, CompressedTextures, DynamicLighting, MaxVisibleCars written into the race's player profile at every start (rebuilt NascarLaunch.exe). 4.23: release v1.2.2-beta.2 - ATTEMPT against a menus start-up freeze (no window) seen on one PC: a menus library starts .NET inside Windows' DLL-loading lock and a COM call waited there; the GvrIO shim now runs one COM round trip first ([Launcher] ComWarmUp, on by default; not yet confirmed on that PC); freeze capture names the owner of Windows' DLL-loading lock and records deeper stacks (rebuilt GvrIO.dll, NascarLaunch.exe). 4.22: release v1.2.2-beta.1 - shortcut and Programs and Features show the NASCAR Racing logo (NASCAR_Racing.ico); the 19 race cars on the disc without a driver select slot are playable drivers (Harvick, Martin, Nemechek, ...): portraits (placeholders with the name and number; Team Racing's where it is installed), name plates, numbers and leaderboard badges built on this PC from the disc by Tools\GvrDriverArt.exe; players can replace them in Shell\Textures\Faces, Names, Numbers (kept as player data, rebuilt by NascarLaunch.exe at start when changed); [Cabinet] ExtraDrivers=false keeps the 12 originals; leaderboard badge shown for every car, #01 and #1 kept apart (rebuilt NascarLaunch.exe). 4.21: release v1.2.1 - an existing install is found and offered for update (Programs and Features entry, shortcuts, usual folders); each install gets a Programs and Features entry with a working Uninstall (asks first, keeps the player data in Documents; uninstaller copy in <install>\Setup); the script asks Windows for administrator rights itself; the one-file NASCAR-GVR-<version>-Setup.exe runs it. .NET 1.1 is no longer installed into Windows: the installer unpacks .NET 1.1 SP1 into <install>\Runtime (and its libraries next to AMPlayer.exe), run-tests it there, and NascarLaunch.exe starts the menus on that private copy (rebuilt NascarLaunch.exe). Fixes clean PCs where the SP1 package could not even unpack (it needs an older .NET to run) and PCs whose Windows .NET 1.1 was damaged; -RepairDotNet now unpacks the private copy again. 4.20: release v1.2.1-beta.4 - [Display] Renderer now also chooses the NASCAR Racing menus' renderer: auto keeps Direct3D 7 where the game's own test passes and uses OpenGL where it fails (there the game greyed out both and drew in software: a frozen "Please Wait"); with [Debug] Log=true the PC's full DirectX 7 picture and the game's own renderer verdict are logged (rebuilt NascarLaunch.exe, GvrIO.dll). 4.19: release v1.2.1-beta.3 - rebuilt NascarLaunch.exe (Team Racing event-source check; no change for NASCAR Racing). 4.18: release v1.2.1-beta.2 - with [Debug] Log=true the LOG folder also gets the menus' and the race's own messages (debug-output.log), the race engine's traces, Windows' crash records for the game, overlay / hook DLLs loaded into the game and the GPU the menus draw with (rebuilt NascarLaunch.exe, GvrIO.dll). 4.17: release v1.2.1-beta.1 - a generic USB H-shifter is recognised from two held gears and remembered (nascar_calibration.ini [Shifter]), a direct-drive base held by another program is still read for steering, the transmission screen follows a PC wheel found late, the front end never loads NASCAR Team Racing's AKLog2 stand-in, no crash on closing the front end, DirectX device list limited to attached displays and logged (rebuilt GvrIO.dll, NascarLaunch.exe: screens in the PC log). 4.16: release v1.2.0 (NASCAR Racing 1.1.1; one zip with NASCAR Team Racing - Install.bat asks which game) - runs on any Windows region format (the attract never loaded on day/month Windows; the shell now runs as en-US), the game can never restart the PC (nightly restart check patched off in NASCARPlugIn.dll + restart calls blocked), race display modes up to 16384 pixels (5120x1440), wheels with pedals / a gear shifter / a separate rim or button boxes on their own USB cables, set up automatically (pedals and shifter type learned from use, PC pedals calibrated on the arcade's own screen and saved in nascar_calibration.ini (kept as player data); [Wheel] overrides), database password masked in the log, region format in the launcher log (rebuilt GvrIO.dll, NascarLaunch.exe, GvrSqlite.dll). 4.15: default folder NASCAR_GVR_1.1 and desktop/start shortcut "NASCAR Racing" (was "NASCAR Team Racing") so the 1.1 and 2.0.2 editions install side by side without clashing; the old shortcut is migrated on install and uninstall. 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -120,6 +120,66 @@ function Show-Message($text, $icon = "Information") {
     finally { $owner.Close() }
 }
 # can we create files there? (a mounted ISO / DVD drive is read-only - seen in a Windows 7 VM)
+# Folders the 2005-2008 programs cannot work from (NascarLaunch.exe checks the same at start, check_folder_name):
+# a name with letters outside this Windows' "ANSI" language reaches them as '?' (nothing starts), deep paths pass
+# the old 260-character limit, and Program Files / OneDrive / Desktop / Documents block or lock the game's own
+# saves (write virtualization, syncing, Windows' ransomware protection). Returns why, or $null when fine.
+function Get-UnsafeFolderReason($path) {
+    try { $full = [IO.Path]::GetFullPath($path).TrimEnd("\") } catch { return "it is not a valid folder name" }
+    $ansi = [Text.Encoding]::Default
+    if ($ansi.GetString($ansi.GetBytes($full)) -ne $full) { return "its name has letters this old game cannot read (use plain Latin letters, numbers, spaces and _ - .)" }
+    if ($full.Length -gt 150) { return "its path is too long for this old game (keep it under 150 characters)" }
+    $places = @(
+        @([Environment]::GetFolderPath("ProgramFiles"), "Program Files - Windows blocks the game's own saves there"),
+        @([Environment]::GetFolderPath("ProgramFilesX86"), "Program Files - Windows blocks the game's own saves there"),
+        @($env:OneDrive, "OneDrive - syncing locks the game's files"),
+        @($env:OneDriveConsumer, "OneDrive - syncing locks the game's files"),
+        @($env:OneDriveCommercial, "OneDrive - syncing locks the game's files"),
+        @([Environment]::GetFolderPath("Desktop"), "the Desktop - often synced, and Windows' ransomware protection can block the game"),
+        @([Environment]::GetFolderPath("MyDocuments"), "Documents - Windows' ransomware protection can block the game's saves"),
+        @([Environment]::GetFolderPath("Windows"), "the Windows folder"))
+    foreach ($p in $places) {
+        if ($p[0] -and ($full + "\").StartsWith(([string]$p[0]).TrimEnd("\") + "\", [StringComparison]::OrdinalIgnoreCase)) { return "it is inside " + $p[1] }
+    }
+    return $null
+}
+
+# glu32.dll of ours next to the menus (Shell\bin): the menus then load GvrIO.dll by themselves, before their first
+# instruction, instead of NascarLaunch.exe injecting it (some antivirus programs block injection). The launcher falls
+# back to injection when this file is missing or did not work. A foreign glu32.dll there is kept as glu32.dll.oem.
+function Install-GvrGlu($shell) {
+    $src = Join-Path $SourceRoot "src\GvrGlu\build\glu32.dll"
+    if (!(Test-Path -LiteralPath $src)) { Warn "glu32.dll (menus loader) missing from the package - the launcher injects GvrIO.dll instead"; return }
+    $live = Join-Path $shell "bin\glu32.dll"
+    if ($DryRun) { Log "  would install $live"; return }
+    if ((Test-Path -LiteralPath $live) -and
+        !([IO.File]::ReadAllText($live, [Text.Encoding]::GetEncoding(28591)).Contains("GvrGlu: loads GvrIO.dll into the menus"))) {
+        Copy-Item -LiteralPath $live -Destination "$live.oem" -Force
+    }
+    Copy-Item -LiteralPath $src -Destination $live -Force
+    Log "--- menus loader installed (Shell\bin\glu32.dll: the menus load GvrIO.dll themselves, no injection) ---"
+}
+
+# DDrawCompat (open source, 0BSD): a compatibility helper for the menus' old Direct3D. Installed switched OFF as
+# Shell\bin\ddraw-compat.dll; NascarLaunch.exe copies it to Shell\bin\ddraw.dll only when [Display] DDrawCompat
+# asks for it (auto = when the PC fails the menus' graphics tests). An active copy of an older version is removed
+# first, so the launcher never mistakes it for a foreign ddraw.dll.
+function Install-DDrawCompat($shell) {
+    $src = Join-Path $SourceRoot "Deploy\DDrawCompat\ddraw.dll"
+    if (!(Test-Path -LiteralPath $src)) { Warn "DDrawCompat missing from the package - the menus' Direct3D helper will not be available"; return }
+    $bin = Join-Path $shell "bin"
+    $off = Join-Path $bin "ddraw-compat.dll"; $live = Join-Path $bin "ddraw.dll"
+    if ($DryRun) { Log "  would install DDrawCompat as $off (switched off)"; return }
+    if ((Test-Path -LiteralPath $live) -and (Test-Path -LiteralPath $off) -and ((Get-Item -LiteralPath $live).Length -eq (Get-Item -LiteralPath $off).Length)) {
+        Remove-Item -LiteralPath $live -Force -ErrorAction SilentlyContinue
+        Log "  DDrawCompat: the active copy of the previous version removed (the launcher switches it on again when needed)"
+    }
+    Copy-Item -LiteralPath $src -Destination $off -Force
+    $lic = Join-Path $SourceRoot "Deploy\DDrawCompat\LICENSE.txt"
+    if (Test-Path -LiteralPath $lic) { Copy-Item -LiteralPath $lic -Destination (Join-Path $bin "ddraw-compat-LICENSE.txt") -Force }
+    Log "--- DDrawCompat installed (switched off; used only when this PC fails the menus' graphics tests) ---"
+}
+
 function Test-WritableFolder($p) {
     try {
         if (!(Test-Path $p)) { New-Item -ItemType Directory -Force $p -ErrorAction Stop | Out-Null }
@@ -1777,6 +1837,19 @@ function Verify-Deployment($root, $game, $shell, $plus, $dbPath) {
     Log ("all required files present ({0:N0} MB installed)" -f ($size / 1MB))
 }
 
+# The launcher's [Display] Gpu setting stores a Windows graphics-chip choice per program
+# (HKCU\Software\Microsoft\DirectX\UserGpuPreferences, value name = full path of the exe). Remove the ones inside $root.
+function Remove-GpuChoices($root) {
+    $key = "HKCU:\Software\Microsoft\DirectX\UserGpuPreferences"
+    if (!(Test-Path $key)) { return }
+    $prefix = ($root.TrimEnd('\') + '\').ToLowerInvariant()
+    foreach ($p in @((Get-ItemProperty -Path $key).PSObject.Properties | Where-Object { $_.Name.ToLowerInvariant().StartsWith($prefix) })) {
+        if ($DryRun) { Log "  would remove the graphics-chip choice for $($p.Name)"; continue }
+        Remove-ItemProperty -Path $key -Name $p.Name -ErrorAction SilentlyContinue
+        Log "  removed the graphics-chip choice for $($p.Name)"
+    }
+}
+
 function Invoke-Uninstall($root) {
     Log "=== UNINSTALL ==="
     $kind = Get-InstallKind $root
@@ -1812,7 +1885,7 @@ function Invoke-Uninstall($root) {
             if ((Test-OurShortcut $l.FullName $root) -and !$DryRun) { Remove-Item -LiteralPath $l.FullName -Force; Log "  removed shortcut $($l.Name)" }
         }
     }
-    if ($ForceOverwrite) { Unregister-Uninstall $root }
+    if ($ForceOverwrite) { Remove-GpuChoices $root; Unregister-Uninstall $root }
     Log "uninstall pass complete"
     if ($ForceOverwrite -and !$DryRun) { Show-Message ("$ShortcutName was removed." + $nl + $nl + "Your scores, settings and calibration were copied to:" + $nl + $keep) }
 }
@@ -1918,6 +1991,12 @@ if ([string]::IsNullOrEmpty($InstallRoot) -and (Test-CanShowDialogs)) {
             $InstallRoot = $null
             continue
         }
+        $why = Get-UnsafeFolderReason $InstallRoot
+        if ($why -and $k -ne "ours" -and $k -ne "ours-legacy" -and $k -ne "ours-partial") {
+            Show-Message ("The game cannot be installed here:`r`n$InstallRoot`r`n`r`nReason: $why.`r`n`r`nPick a simple folder, for example C:\Games.") "Warning"
+            $InstallRoot = $null
+            continue
+        }
         if ($DryRun -or (Test-WritableFolder $InstallRoot)) { break }
         Show-Message "Cannot write to:`r`n$InstallRoot`r`n`r`nThat is probably the game disc or a read-only drive. Pick a folder on your hard drive, for example C:\Games." "Warning"
     }
@@ -1935,6 +2014,15 @@ if ([string]::IsNullOrEmpty($InstallRoot)) {
 }
 $InstallRoot = $InstallRoot.TrimEnd("\")
 if ($InstallRoot -match '^[A-Za-z]:$' -or $InstallRoot -match '^[A-Za-z]:\\$') { Fail "Refusing to install to a drive root: $InstallRoot" }
+if (!$Uninstall) {
+    $why = Get-UnsafeFolderReason $InstallRoot
+    if ($why) {
+        if (@("ours", "ours-legacy", "ours-partial") -contains (Get-InstallKind $InstallRoot)) {
+            Warn "this install is in a folder the game may not work from: $why. If it does not start, install again into a simple folder such as C:\Games."
+            if (!$NoGui) { Show-Message ("This install is in a folder the game may not work from:`r`n$InstallRoot`r`n`r`nReason: $why.`r`n`r`nThe update continues. If the game does not start, install it again into a simple folder such as C:\Games.") "Warning" }
+        } else { Fail "Not installing into $InstallRoot - $why. Choose a simple folder, for example C:\Games." }
+    }
+}
 if (!$DryRun -and !$Uninstall -and !(Test-WritableFolder $InstallRoot)) {
     Fail "Cannot write to $InstallRoot - it is probably the game disc or a read-only drive. Choose a folder on your hard drive, for example C:\Games\NASCAR_GVR."
 }
@@ -2033,6 +2121,8 @@ Fix-DirNames $Game
 Install-SupportDlls $Game $Shell
 Install-GvrIoShim $Game $Shell
 Install-GvrLinking $Shell
+Install-DDrawCompat $Shell
+Install-GvrGlu $Shell
 Disable-CabinetPlugIns $Game
 Repoint-ShellPaths $Shell
 Apply-BytePatches $InstallRoot

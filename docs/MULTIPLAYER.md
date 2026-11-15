@@ -25,6 +25,8 @@ Up to 10 players. The cabinet that chose first runs the race for the others.
 
 - Start the game on every PC first: a player who chooses a track before the others are connected
   races alone, as on the arcade.
+- When everyone who is choosing has reached the Lobby, the race starts after 15 seconds. A player who
+  presses Start in that time is waited for.
 - When a player leaves a race, the others see "connection lost" and return to the menus.
 
 ## Straight into a race
@@ -36,7 +38,7 @@ Everyone sets, in `nascar_settings.ini`, section `[Multiplayer]`:
 | `Mode` | `host` | `join` |
 | `Relay` | the relay server (default `nascar.furioussteel.net:22600`) | the same |
 | `Room` | empty (the public room) or a name you pick | the same as the host |
-| `Players` | players including you, 2 to 10 | (not used) |
+| `Players` | how many to wait for, including you, 2 to 10 (not used in the lobby) | (not used) |
 
 Then everyone starts the game as usual. A small window shows who is in. The race starts when all
 `Players` are in; the host can also press **Start now** to race with the players already there.

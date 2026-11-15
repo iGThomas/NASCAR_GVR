@@ -33,6 +33,9 @@ $files = @(
     # both
     "Tools\unshield.exe", "Tools\Fix-GvrDirNames.ps1", "Tools\Check-DotNet11.ps1",
     "src\GvrIOShim\build\GvrIO.dll",
+    # optional helper, NOT in the installers' $ReleaseFiles (antivirus may remove a ddraw.dll; the install goes on)
+    "Deploy\DDrawCompat\ddraw.dll", "Deploy\DDrawCompat\LICENSE.txt",
+    "src\GvrGlu\build\glu32.dll",          # optional too: without it the launcher injects GvrIO.dll
     "src\NascarLaunch\build\NascarLaunch.exe", "src\NascarLaunch\nascar_settings.ini", "src\NascarLaunch\NASCAR_Racing.ico", "src\NascarLaunch\NASCAR_Team_Racing.ico",
     "src\GvrSqlite\GvrSqlite.cs",
     "Dependencies\DotNet11\dotnetfx.exe", "Dependencies\DotNet11\NDP1.1sp1-KB867460-X86.exe",

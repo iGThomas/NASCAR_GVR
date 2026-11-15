@@ -190,7 +190,7 @@ The install log is in `%TEMP%\NASCAR_GVR_Install\install.log`. If the race will 
 | `Install-NASCAR-GVR-Portable.ps1` | the NASCAR Racing (v1.1) installer |
 | `Install-NASCAR-Team-Racing-Portable.ps1` | the NASCAR Team Racing (2.0.2) installer |
 | `Patches\` | the byte patches the installers apply to the original files (checked before writing) |
-| `Deploy\`, `Deploy-2.0.2\` | the SQLite database layer and the prepared `game.db`, per game |
+| `Deploy\`, `Deploy-2.0.2\` | the SQLite database layer and the prepared `game.db`, per game. `Deploy\DDrawCompat\` holds DDrawCompat v0.7.2, a Direct3D 7 helper for the menus |
 | `src\` | source for our DLLs and the launcher (see below) |
 | `Tools\` | the disc extractor (`unshield.exe`) and the research tools |
 | `Dependencies\` | Microsoft's .NET 1.1 + SP1 packages (unpacked into the game folder at install time), DXVK |
@@ -206,6 +206,8 @@ The install log is in `%TEMP%\NASCAR_GVR_Install\install.log`. If the race will 
 - `GvrSqlite` — the SQLite provider the database layer uses.
 - `GvrLinking` — `GvrLinking.dll`: the menus' cabinet link, rebuilt over the internet relay (the
   original used IPX); used only with `[Multiplayer] Mode=lobby`.
+- `GvrGlu` — `glu32.dll` next to the menus: makes them load `GvrIO.dll` by themselves at start. Every glu
+  function passes on to Windows' own `glu32.dll`.
 - `GvrDongleEmu` — a software dongle back end (research; not installed).
 - `Setup` — `Setup.exe`, the one-file download: unpacks the release package it carries to a fresh
   temporary folder, runs `Install-NASCAR.ps1` and removes the folder again.
