@@ -51,7 +51,7 @@ param(
 )
 
 $ErrorActionPreference = "Stop"
-$Version = "2026-11-14-teamracing-portable-1.8" # 1.8: release v1.2.2-beta.3 - safe start: before the menus load anything the GvrIO shim prepares COM (one round trip) and starts the install's .NET 1.1 itself on a clean thread ([Launcher] SafeStart, on by default; replaces beta.2's ComWarmUp, a leftover ComWarmUp line does nothing); MOZA R3 bundle steering (a wheel-and-pedals device is no longer taken for a pedal box) (rebuilt GvrIO.dll). 1.7: release v1.2.2-beta.2 - ATTEMPT against a menus start-up freeze (no window) seen on one PC: a menus library starts .NET inside Windows' DLL-loading lock and a COM call waited there; the GvrIO shim now runs one COM round trip first ([Launcher] ComWarmUp, on by default; not yet confirmed on that PC); freeze capture names the owner of Windows' DLL-loading lock and records deeper stacks (rebuilt GvrIO.dll, NascarLaunch.exe). 1.6: shortcut and Programs and Features show the NASCAR Team Racing logo (NASCAR_Team_Racing.ico); Kevin Harvick (#29) playable again - the disc removed him (driver select skipped him, the operator Drivers page locked him to "Disable", high scores showed car 29 as 100, his race car file was a fantasy AI car with a GlobalVR #53 paint): scene patches in the byte-patch table, 29.veh set back to #29 Kevin Harvick, his Shell-Pennzoil race paint rebuilt from the menus' own picture of his car (Restore-HarvickCar). 1.5: release v1.2.1 - an existing install is found and offered for update (Programs and Features entry, shortcuts, usual folders); each install gets a Programs and Features entry with a working Uninstall (asks first, keeps the player data in Documents; uninstaller copy in <install>\Setup); the script asks Windows for administrator rights itself; the one-file NASCAR-GVR-<version>-Setup.exe runs it. .NET 1.1 is no longer installed into Windows: the installer unpacks .NET 1.1 SP1 into <install>\Runtime (and its libraries next to AMPlayer.exe), run-tests it there, and NascarLaunch.exe starts the menus on that private copy (rebuilt NascarLaunch.exe). Fixes clean PCs where the SP1 package could not even unpack (it needs an older .NET to run) and PCs whose Windows .NET 1.1 was damaged; -RepairDotNet now unpacks the private copy again. The Windows event source GVR takes its messages from the private copy. 1.4: release v1.2.1-beta.4 - shared launcher / shim: DirectX 7 report and the menus' own renderer verdict in the log with [Debug] Log=true (rebuilt NascarLaunch.exe, GvrIO.dll). 1.3: release v1.2.1-beta.3 - registers the Windows event source GVR (Application log): without it the menus went black at start-up on every PC that never had it (.NET 1.1 tried to create the source, which needs administrator rights; NASCAR_INITIALIZE_SHELL threw). Launcher warns when the source is missing (rebuilt NascarLaunch.exe). 1.2: release v1.2.1-beta.2 - with [Debug] Log=true the menus' script errors and exceptions go to LOG\aklog-AMPlayer.log (rebuilt AKLogShim.dll), plus the shared diagnostics of 4.18 (debug output, race traces, Windows crash records, overlay DLLs, the GPU the menus draw with), so one player log shows why the menus fail. 1.1: release v1.2.1-beta.1 - menus pick OpenGL or Direct3D by testing OpenGL at every start ([Display] Renderer = auto; no picture before on PCs with only software OpenGL), OpenGL no longer greyed out on drivers listing only newer extension names, AKLogShim answers only this front end (NASCAR Racing 1.1 on the same PC loaded it), plus the shared controller and shutdown fixes of 4.17 (rebuilt GvrIO.dll, NascarLaunch.exe, AKLogShim.dll). 1.0: first release, in v1.2.0 (one zip with NASCAR Racing - Install.bat asks which game); everything of 0.1-beta and 0.2-beta below. 0.2-beta: start-up ~9 s instead of ~23 s (Shell.am 15 s IO-board wait -> 0.5 s, as in 1.1); runs on any Windows region format (the shell parses US dates; it now runs as en-US - crashed or hung on day/month Windows), the game can never restart the PC (the cabinet's nightly restart prompt is off and shutdown.exe / restart calls are blocked), database password no longer written to the log, region format in the launcher log, race accepts display modes up to 16384 pixels (5120x1440 was blurry), shipped game.db with empty play statistics, steering wheels with pedals, a gear shifter, a separate rim or button boxes on their own USB cables, set up automatically (pedals and shifter type learned from use, PC pedals calibrated on the arcade's own screen and saved in nascar_calibration.ini (kept as player data), force feedback on joystick-type bases; [Wheel] overrides; controls: line in the log). 0.1-beta: first NASCAR Team Racing (2.0.2) package - cabinet shell + race, Xbox/PS pad + wheel, SQLite, byte-patched plug-ins/scenes, AKLogShim COM stub, OpenGL renderer (alt-tab safe); installs to NASCAR_GVR_2.0 alongside the 1.1 edition. (The 4.x history below is the shared installer's 1.1 line.) 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
+$Version = "2026-11-15-teamracing-portable-1.9" # 1.9: release v1.2.2-beta.4 - nascar_settings.ini in a clearer layout (one note per setting); an update rewrites the player's file in it and keeps every value (Rebuild-Settings). multiplayer (beta): [Multiplayer] Mode=host/join goes straight into a race through an internet relay server or on the same network (rebuilt NascarLaunch.exe; the arcade lobby is NASCAR Racing only for now). [Graphics] AITextureSize defaults to 0 (no size limit for computer cars' paint: the disc's paints are 512 anyway, and a custom paint without mipmaps can no longer crash the race); a settings file still holding beta.3's default 512 under beta.3's comment is switched to 0 once (Update-OldDefaults), a value the player chose is kept. 1.8: release v1.2.2-beta.3 - safe start: before the menus load anything the GvrIO shim prepares COM (one round trip) and starts the install's .NET 1.1 itself on a clean thread ([Launcher] SafeStart, on by default; replaces beta.2's ComWarmUp, a leftover ComWarmUp line does nothing); MOZA R3 bundle steering (a wheel-and-pedals device is no longer taken for a pedal box) (rebuilt GvrIO.dll). 1.7: release v1.2.2-beta.2 - ATTEMPT against a menus start-up freeze (no window) seen on one PC: a menus library starts .NET inside Windows' DLL-loading lock and a COM call waited there; the GvrIO shim now runs one COM round trip first ([Launcher] ComWarmUp, on by default; not yet confirmed on that PC); freeze capture names the owner of Windows' DLL-loading lock and records deeper stacks (rebuilt GvrIO.dll, NascarLaunch.exe). 1.6: shortcut and Programs and Features show the NASCAR Team Racing logo (NASCAR_Team_Racing.ico); Kevin Harvick (#29) playable again - the disc removed him (driver select skipped him, the operator Drivers page locked him to "Disable", high scores showed car 29 as 100, his race car file was a fantasy AI car with a GlobalVR #53 paint): scene patches in the byte-patch table, 29.veh set back to #29 Kevin Harvick, his Shell-Pennzoil race paint rebuilt from the menus' own picture of his car (Restore-HarvickCar). 1.5: release v1.2.1 - an existing install is found and offered for update (Programs and Features entry, shortcuts, usual folders); each install gets a Programs and Features entry with a working Uninstall (asks first, keeps the player data in Documents; uninstaller copy in <install>\Setup); the script asks Windows for administrator rights itself; the one-file NASCAR-GVR-<version>-Setup.exe runs it. .NET 1.1 is no longer installed into Windows: the installer unpacks .NET 1.1 SP1 into <install>\Runtime (and its libraries next to AMPlayer.exe), run-tests it there, and NascarLaunch.exe starts the menus on that private copy (rebuilt NascarLaunch.exe). Fixes clean PCs where the SP1 package could not even unpack (it needs an older .NET to run) and PCs whose Windows .NET 1.1 was damaged; -RepairDotNet now unpacks the private copy again. The Windows event source GVR takes its messages from the private copy. 1.4: release v1.2.1-beta.4 - shared launcher / shim: DirectX 7 report and the menus' own renderer verdict in the log with [Debug] Log=true (rebuilt NascarLaunch.exe, GvrIO.dll). 1.3: release v1.2.1-beta.3 - registers the Windows event source GVR (Application log): without it the menus went black at start-up on every PC that never had it (.NET 1.1 tried to create the source, which needs administrator rights; NASCAR_INITIALIZE_SHELL threw). Launcher warns when the source is missing (rebuilt NascarLaunch.exe). 1.2: release v1.2.1-beta.2 - with [Debug] Log=true the menus' script errors and exceptions go to LOG\aklog-AMPlayer.log (rebuilt AKLogShim.dll), plus the shared diagnostics of 4.18 (debug output, race traces, Windows crash records, overlay DLLs, the GPU the menus draw with), so one player log shows why the menus fail. 1.1: release v1.2.1-beta.1 - menus pick OpenGL or Direct3D by testing OpenGL at every start ([Display] Renderer = auto; no picture before on PCs with only software OpenGL), OpenGL no longer greyed out on drivers listing only newer extension names, AKLogShim answers only this front end (NASCAR Racing 1.1 on the same PC loaded it), plus the shared controller and shutdown fixes of 4.17 (rebuilt GvrIO.dll, NascarLaunch.exe, AKLogShim.dll). 1.0: first release, in v1.2.0 (one zip with NASCAR Racing - Install.bat asks which game); everything of 0.1-beta and 0.2-beta below. 0.2-beta: start-up ~9 s instead of ~23 s (Shell.am 15 s IO-board wait -> 0.5 s, as in 1.1); runs on any Windows region format (the shell parses US dates; it now runs as en-US - crashed or hung on day/month Windows), the game can never restart the PC (the cabinet's nightly restart prompt is off and shutdown.exe / restart calls are blocked), database password no longer written to the log, region format in the launcher log, race accepts display modes up to 16384 pixels (5120x1440 was blurry), shipped game.db with empty play statistics, steering wheels with pedals, a gear shifter, a separate rim or button boxes on their own USB cables, set up automatically (pedals and shifter type learned from use, PC pedals calibrated on the arcade's own screen and saved in nascar_calibration.ini (kept as player data), force feedback on joystick-type bases; [Wheel] overrides; controls: line in the log). 0.1-beta: first NASCAR Team Racing (2.0.2) package - cabinet shell + race, Xbox/PS pad + wheel, SQLite, byte-patched plug-ins/scenes, AKLogShim COM stub, OpenGL renderer (alt-tab safe); installs to NASCAR_GVR_2.0 alongside the 1.1 edition. (The 4.x history below is the shared installer's 1.1 line.) 4.14: release v1.1.0 - wheel pedals set up automatically by model (rebuilt GvrIO.dll), SwapPedals setting, Car keeps a leading zero (rebuilt NascarLaunch.exe). 4.13: player data (leaderboards/stats db, settings, race saves) backed up before every install/update and kept by -ForceOverwrite (only -ResetData resets it); uninstall keeps a copy in Documents. 4.12: .NET 1.1 must pass a run test (else removed + reinstalled clean, -RepairDotNet forces it); no temp folder from an earlier run is reused (disc extraction, .NET images); unpacked disc checked complete. 4.11: install identity (gvr-install.ini) + update mode (no disc, settings merge); never installs into / updates / removes a folder holding anything else. 4.10: no CLR crash dialog can stall the .NET 1.1 install (regsvcs.exe on Win10). 4.9: release guard - stops before installing when any file of the release zip is missing (antivirus), no plain-shell fallback, launcher required; series default 2005NEXTEL. 4.8: launcher keeps the race above the shell's "Please Wait" overlay in borderless (rebuilt NascarLaunch.exe). 4.7: byte-patch stage logs each file + fails loudly on a non-v1.1 disc; verification logs every required file one by one
 
 $Root = Split-Path -Parent $MyInvocation.MyCommand.Path
 if ([string]::IsNullOrEmpty($SourceRoot)) { $SourceRoot = $Root }
@@ -344,6 +344,80 @@ function Unregister-Uninstall($root, $except = "") {
 # Settings merge on update: add every section / setting the new template has and the player's
 # nascar_settings.ini lacks (with the comment lines just above it), and never change a value the
 # player has. Unknown keys of theirs are left alone. PowerShell 2.0 compatible.
+# One-time change of a default the player never chose: a key still at an OLD default, with the comment line
+# an earlier release wrote right above it, gets the new value and the new comment. A value the player changed
+# keeps its own number; one set back later sits under the new comment and is never changed again.
+$OldDefaults = @(
+    @{ Key = "AITextureSize"; Old = "512"; New = "0"     # 1.2.2-beta.3 wrote 512 (the arcade's); 0 from beta.4
+       OldComment = "; Computer cars' paint size limit: 512, or 0 = none (also stops custom paint crashing on them)."
+       NewComment = "; Largest paint the computer cars may use, in pixels. 0 = no limit." }
+)
+function Update-OldDefaults($ini) {
+    if (!(Test-Path -LiteralPath $ini)) { return }
+    $lines = [IO.File]::ReadAllLines($ini); $n = 0
+    for ($i = 1; $i -lt $lines.Count; $i++) {
+        foreach ($d in $OldDefaults) {
+            if ($lines[$i].Trim() -eq ($d.Key + "=" + $d.Old) -and $lines[$i - 1].Trim() -eq $d.OldComment) {
+                $lines[$i - 1] = $d.NewComment; $lines[$i] = $d.Key + "=" + $d.New; $n++
+                Log ("  settings: " + $d.Key + " " + $d.Old + " -> " + $d.New + " (new default; it was never changed by you)")
+            }
+        }
+    }
+    if ($n -and !$DryRun) { [IO.File]::WriteAllLines($ini, $lines) }
+}
+
+# Settings on an update: the file is written again in the current layout (new notes, new settings with
+# their defaults) and every value the player set is carried over - also lines the template does not have
+# (e.g. wheel ButtonN), kept at the end of their section under "Your own settings". Runs after
+# Update-OldDefaults, which needs the old notes to recognise an untouched old default.
+function Rebuild-Settings($dst, $tpl) {
+    if (!(Test-Path -LiteralPath $tpl) -or !(Test-Path -LiteralPath $dst)) { return }
+    $vals = @{}; $order = @{}; $secOrder = New-Object System.Collections.ArrayList; $sec = ""
+    foreach ($raw in [IO.File]::ReadAllLines($dst)) {
+        $l = $raw.Trim()
+        if ($l -match '^\[(.+)\]$') { $sec = $Matches[1].Trim(); $sk = $sec.ToLower()
+            if (!$vals.ContainsKey($sk)) { $vals[$sk] = @{}; $order[$sk] = New-Object System.Collections.ArrayList; [void]$secOrder.Add($sec) }; continue }
+        if (!$l -or $l.StartsWith(";") -or $l.StartsWith("#") -or !$l.Contains("=")) { continue }
+        $sk = $sec.ToLower()
+        if (!$vals.ContainsKey($sk)) { $vals[$sk] = @{}; $order[$sk] = New-Object System.Collections.ArrayList; [void]$secOrder.Add($sec) }
+        $i = $l.IndexOf("="); $k = $l.Substring(0, $i).Trim(); $v = $l.Substring($i + 1).Trim()
+        if (!$vals[$sk].ContainsKey($k.ToLower())) { [void]$order[$sk].Add($k) }
+        $vals[$sk][$k.ToLower()] = $v
+    }
+    $out = New-Object System.Collections.ArrayList; $used = @{}; $tplSecs = @{}; $sec = ""; $kept = 0
+    $flush = {
+        param($s)
+        if (!$s -or !$vals.ContainsKey($s)) { return }
+        $extra = @($order[$s] | Where-Object { !$used.ContainsKey($s + "|" + $_.ToLower()) })
+        if ($extra.Count) {
+            [void]$out.Add("; Your own settings:")
+            foreach ($k in $extra) { [void]$out.Add($k + " = " + $vals[$s][$k.ToLower()]) }
+            [void]$out.Add("")
+        }
+    }
+    foreach ($raw in [IO.File]::ReadAllLines($tpl)) {
+        $l = $raw.Trim()
+        if ($l -match '^\[(.+)\]$') { & $flush $sec; $sec = $Matches[1].Trim().ToLower(); $tplSecs[$sec] = 1; [void]$out.Add($raw); continue }
+        if ($l -and !$l.StartsWith(";") -and !$l.StartsWith("#") -and $l.Contains("=")) {
+            $i = $raw.IndexOf("="); $kl = $raw.Substring(0, $i).Trim().ToLower()
+            if ($vals.ContainsKey($sec) -and $vals[$sec].ContainsKey($kl)) {
+                $v = $vals[$sec][$kl]; $used[$sec + "|" + $kl] = 1; $kept++
+                [void]$out.Add($raw.Substring(0, $i + 1) + $(if ($v) { " " + $v } else { "" })); continue
+            }
+        }
+        [void]$out.Add($raw)
+    }
+    & $flush $sec
+    foreach ($s in $secOrder) {                         # whole sections the template does not have
+        if ($tplSecs.ContainsKey($s.ToLower()) -or !$order[$s.ToLower()].Count) { continue }
+        [void]$out.Add(""); [void]$out.Add("[" + $s + "]"); [void]$out.Add("; Your own settings:")
+        foreach ($k in $order[$s.ToLower()]) { [void]$out.Add($k + " = " + $vals[$s.ToLower()][$k.ToLower()]) }
+    }
+    if ($DryRun) { Log "  settings: would rewrite nascar_settings.ini in the new layout ($kept of your values kept)"; return }
+    [IO.File]::WriteAllLines($dst, [string[]]$out.ToArray())
+    Log "  settings: nascar_settings.ini rewritten in the new layout - $kept of your values kept, new settings at their defaults"
+}
+
 function Merge-Settings($dst, $tpl) {
     if (!(Test-Path -LiteralPath $tpl) -or !(Test-Path -LiteralPath $dst)) { return }
     $user = New-Object System.Collections.ArrayList
@@ -1601,22 +1675,22 @@ function Install-Launcher($root, $game, $shell) {
 
     # The settings file is the player's; never overwrite an edited one.
     $iniDst = Join-Path $root "nascar_settings.ini"
-    if ((Test-Path $iniDst) -and !$ResetData) { Log "  keeping your existing nascar_settings.ini"; Merge-Settings $iniDst $iniSrc }
+    if ((Test-Path $iniDst) -and !$ResetData) { Log "  keeping your existing nascar_settings.ini"; Update-OldDefaults $iniDst; Rebuild-Settings $iniDst $iniSrc }
     else {
         Copy-FileIfPresent $iniSrc $iniDst "nascar_settings.ini"
         # seed it with the values chosen on the command line
         if (!$DryRun -and (Test-Path $iniDst)) {
             $t = [IO.File]::ReadAllText($iniDst)
-            $t = $t -replace '(?m)^Width=.*$',  "Width=$Width"
-            $t = $t -replace '(?m)^Height=.*$', "Height=$Height"
-            $t = $t -replace '(?m)^Fullscreen=.*$', ("Fullscreen=" + $(if ($Fullscreen) { "true" } else { "false" }))
+            $t = $t -replace '(?m)^Width\s*=.*$',  "Width  = $Width"
+            $t = $t -replace '(?m)^Height\s*=.*$', "Height = $Height"
+            $t = $t -replace '(?m)^Fullscreen\s*=.*$', ("Fullscreen = " + $(if ($Fullscreen) { "true" } else { "false" }))
             # Default to a borderless window that fills the screen (the race is windowed otherwise
             # and, at a size smaller than the desktop, shows as a small window). -Fullscreen opts
             # into exclusive fullscreen instead, so Borderless must be off for it to take effect.
-            $t = $t -replace '(?m)^Borderless=.*$', ("Borderless=" + $(if ($Fullscreen) { "false" } else { "true" }))
-            $t = $t -replace '(?m)^Track=.*$',  "Track=$Track"
-            $t = $t -replace '(?m)^Series=.*$', "Series=$Series"
-            if ($SkipShell) { $t = $t -replace '(?m)^Mode=shell\s*$', "Mode=race" }
+            $t = $t -replace '(?m)^Borderless\s*=.*$', ("Borderless = " + $(if ($Fullscreen) { "false" } else { "true" }))
+            $t = $t -replace '(?m)^Track\s*=.*$',  "Track = $Track"
+            $t = $t -replace '(?m)^Series\s*=.*$', "Series = $Series"
+            if ($SkipShell) { $t = $t -replace '(?m)^Mode\s*=\s*shell\s*$', "Mode = race" }
             [IO.File]::WriteAllText($iniDst, $t)
             Log ("  nascar_settings.ini seeded (" + $(if ($Width -le 0) { "screen size" } else { "$Width x $Height" }) + ", " + $(if ($Fullscreen) { "fullscreen" } else { "borderless" }) + ")")
         }

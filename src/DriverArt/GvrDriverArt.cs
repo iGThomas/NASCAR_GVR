@@ -798,14 +798,21 @@ namespace GvrDriverArt
                 catch (Exception e) { Log.W("number #" + d.Num + ": " + e.Message); failed++; }
             }
             string state = Path.Combine(tex, "GvrDriverArt.state"), sig = Signature();
-            bool have = donors.Values.All(dn => File.Exists(Path.Combine(tex, "GvrFace_" + dn.Slot + ".png")) && File.Exists(Path.Combine(tex, "GvrNum_" + dn.Slot + ".png")));
+            bool have = donors.Values.All(dn => File.Exists(Path.Combine(tex, "GvrFace_" + dn.Slot + ".png")) && File.Exists(Path.Combine(tex, "GvrNum_" + dn.Slot + ".png"))
+                                             && File.Exists(Path.Combine(tex, "GvrLobby", "Face_" + dn.Num + ".png")));
+            // single pictures for the linked-race Lobby, which shows one portrait and one number per cabinet
+            // (it cannot crop the 4-picture sheets the driver select uses): GvrLobby\Face_<car>.png, Num_<car>.png
+            string lobby = Path.Combine(tex, "GvrLobby");
+            Directory.CreateDirectory(lobby);
             if (!force && have && File.Exists(state) && File.ReadAllText(state) == sig) { Log.W("faces and numbers unchanged"); return failed; }
             foreach (var dn in donors.Values)
             {
                 try
                 {
-                    var fs = new Img(1024, 256); fs.Paste(Disc.AmPicture(Am(), dn.FaceOff, 256, 256), 0, 0);
-                    var ns = new Img(512, 64); ns.Paste(Disc.AmPicture(Am(), dn.NumOff, 128, 64), 0, 0);
+                    var ownFace = Disc.AmPicture(Am(), dn.FaceOff, 256, 256); var ownNum = Disc.AmPicture(Am(), dn.NumOff, 128, 64);
+                    var fs = new Img(1024, 256); fs.Paste(ownFace, 0, 0);
+                    var ns = new Img(512, 64); ns.Paste(ownNum, 0, 0);
+                    ownFace.SavePng(Path.Combine(lobby, "Face_" + dn.Num + ".png")); ownNum.SavePng(Path.Combine(lobby, "Num_" + dn.Num + ".png"));
                     foreach (var d in drivers.Where(x => x.Donor == dn.Slot))
                     {
                         var face = Img.Load(Path.Combine(tex, "Faces", d.FileName)); if (face.W != 256 || face.H != 256) face = face.Resize(256, 256);
@@ -814,6 +821,7 @@ namespace GvrDriverArt
                         fs.Paste(face, 256 * d.Cell, 0);
                         var num = Img.Load(Path.Combine(tex, "Numbers", d.FileName)); if (num.W != 128 || num.H != 64) num = num.Resize(128, 64);
                         ns.Paste(num, 128 * d.Cell, 0);
+                        face.SavePng(Path.Combine(lobby, "Face_" + d.Num + ".png")); num.SavePng(Path.Combine(lobby, "Num_" + d.Num + ".png"));
                     }
                     fs.SavePng(Path.Combine(tex, "GvrFace_" + dn.Slot + ".png")); ns.SavePng(Path.Combine(tex, "GvrNum_" + dn.Slot + ".png"));
                 }

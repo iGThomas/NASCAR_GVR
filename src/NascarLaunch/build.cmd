@@ -9,8 +9,8 @@ cd /d "%~dp0"
 if not exist build mkdir build
 rc /nologo /fo build\NascarLaunch.res NascarLaunch.rc
 if errorlevel 1 ( echo RESOURCE COMPILE FAILED & exit /b 1 )
-cl /nologo /MT /EHsc /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /Fo:build\ /Fd:build\ NascarLaunch.cpp ^
+cl /nologo /MT /EHsc /O2 /W3 /D_CRT_SECURE_NO_WARNINGS /Fo:build\ /Fd:build\ NascarLaunch.cpp NascarNet.cpp ^
    /link /OUT:build\NascarLaunch.exe /SUBSYSTEM:WINDOWS build\NascarLaunch.res ^
-   user32.lib kernel32.lib gdi32.lib shell32.lib shlwapi.lib advapi32.lib
+   user32.lib kernel32.lib gdi32.lib shell32.lib shlwapi.lib advapi32.lib ws2_32.lib
 if errorlevel 1 ( echo BUILD FAILED & exit /b 1 )
 echo BUILD_OK

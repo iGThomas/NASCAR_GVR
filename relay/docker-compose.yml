@@ -1,0 +1,23 @@
+# NASCAR GVR relay server. Start: docker compose up -d   Logs: docker logs -f nascar-relay
+services:
+  nascar-relay:
+    image: python:3.12-slim
+    container_name: nascar-relay
+    restart: unless-stopped
+    # host network: the relay must see each player's real address and port (Docker's UDP port
+    # mapping can hide them behind one address)
+    network_mode: host
+    user: "65534:65534"
+    read_only: true
+    command: ["python", "-u", "/app/nascar_relay.py"]
+    volumes:
+      - ./nascar_relay.py:/app/nascar_relay.py:ro
+    environment:
+      - RELAY_PORT=22600
+      - RELAY_MAX_ROOMS=100
+      - RELAY_RATE_KBPS=2048
+    logging:
+      driver: json-file
+      options:
+        max-size: "1m"
+        max-file: "3"

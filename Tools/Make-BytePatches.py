@@ -22,7 +22,8 @@ FILES = [
     r"Shell\bin\PlugIns\NASCARPlugIn.dll",   # incl. 0xD090 nightly-restart check -> "not yet" (the working install must have it)
     r"Shell\Shell.am",
     r"Shell\NASCAR_Attract.am",
-    r"Shell\NASCAR_Selection.am",
+    r"Shell\NASCAR_Selection.am",            # incl. the arcade lobby: SendPacket restored, cabinet number, Lobby portraits
+    r"Shell\Launch_Game_Error.am",           # "game crashed" screen: back to attract when no dongle answer comes
 ]
 AM_MENUS = ["Adjust_Gamma", "Adjust_Resolution", "Adjust_Vibrance", "Control_Test",
             "Histogram_Continue", "Histogram_GameTime", "Monitor_Test", "Motion_Test",

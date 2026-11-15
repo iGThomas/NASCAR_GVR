@@ -43,6 +43,7 @@
 #include <d3d.h>
 #include <dbghelp.h>
 #include <tlhelp32.h>
+#include "NascarNet.h"
 
 #pragma comment(lib, "shlwapi.lib")
 #pragma comment(lib, "dxguid.lib")
@@ -516,6 +517,18 @@ static void apply_settings(const Settings& s)
     snprintf(n, sizeof(n), "%d", s.musicVolume);   store_set("MusicVolume", n);
     snprintf(n, sizeof(n), "%d", s.simpleAttract); store_set("SimpleAttract", n);
     store_set("ExtraDrivers", s.extraDrivers ? "1" : "0");
+    // [Multiplayer] PlayerName: shown to the other players (Lobby cards; the GvrIO shim puts it on the car
+    // label in a linked race). Up to 15 characters (the race's label size); no | ; " (they separate fields
+    // in the menus' messages and the ini). Empty = the game's own "Driver 1", "Driver 2".
+    {
+        std::string raw = ini_str("Multiplayer", "PlayerName", ""), name;
+        for (size_t i = 0; i < raw.size() && name.size() < 15; i++) {
+            unsigned char ch = (unsigned char)raw[i];
+            if (ch >= 32 && ch < 127 && ch != '|' && ch != ';' && ch != '"') name += (char)ch;
+        }
+        while (!name.empty() && name[0] == ' ') name.erase(0, 1);
+        store_set("PlayerName", name);
+    }
     store_set("cmd", compose_cmd(s));
     logf("settings -> nascar_registry.ini: %dx%d %s, cmd=\"%s\"", s.width, s.height,
          s.borderless ? "borderless" : (s.fullscreen ? "fullscreen" : "windowed"), compose_cmd(s).c_str());
@@ -569,6 +582,47 @@ static void ensure_anark_prefs(void)
         logf("Anark client preferences restored");
     }
     RegCloseKey(k);
+}
+
+// ---------------------------------------------------------------- arcade lobby (menus' cabinet link)
+//
+// [Multiplayer] Mode=lobby links the menus through the relay: the link plug-in goes back into the
+// shell's plug-in list (the installer takes it out, because the original GvrLinking.dll hangs the
+// menus without IPX). Only with the relay GvrLinking.dll in place, and only for NASCAR Racing 1.1;
+// any other mode takes the plug-in out again, so single-player menus stay exactly as before.
+static void apply_link_plugin(bool lobby, const char* amPlayer)
+{
+    char cfg[MAX_PATH], dll[MAX_PATH], plug[MAX_PATH];
+    snprintf(cfg, sizeof cfg, "%s\\Game\\config\\GvrShellPlugInList.xml", g_root);
+    snprintf(dll, sizeof dll, "%s\\Shell\\bin\\GvrLinking.dll", g_root);
+    snprintf(plug, sizeof plug, "%s\\Shell\\bin\\plugins\\GvrLinkingPlugIn.dll", g_root);
+    std::string xml, bin;
+    if (!read_whole(cfg, xml)) return;
+    const char* tag = "<GvrLinkingPlugIn />";
+    size_t at = xml.find(tag);
+    bool ours = read_whole(dll, bin) && bin.find("relay link for the menus") != std::string::npos;
+    bool want = lobby && ours && PathFileExistsA(plug) && !is_teamracing_shell(amPlayer);
+    if (lobby && !want)
+        logf("multiplayer lobby: not available (%s)", is_teamracing_shell(amPlayer) ? "NASCAR Racing 1.1 only for now"
+             : !ours ? "Shell\\bin\\GvrLinking.dll is not the relay link" : "GvrLinkingPlugIn.dll missing");
+    if (want == (at != std::string::npos)) {
+        if (want) logf("multiplayer lobby: link plug-in on");
+        return;
+    }
+    if (want) {
+        size_t end = xml.find("</GvrShell>");
+        if (end == std::string::npos) return;
+        xml.insert(end, std::string("\t") + tag + "\r\n");
+    } else {
+        size_t ls = xml.rfind('\n', at);
+        size_t le = xml.find('\n', at);
+        xml.erase(ls == std::string::npos ? at : ls + 1, (le == std::string::npos ? xml.size() : le + 1) - (ls == std::string::npos ? at : ls + 1));
+    }
+    FILE* f = fopen(cfg, "wb");
+    if (!f) { logf("multiplayer lobby: cannot write %s", cfg); return; }
+    fwrite(xml.data(), 1, xml.size(), f);
+    fclose(f);
+    logf("multiplayer lobby: link plug-in %s", want ? "turned on" : "turned off");
 }
 
 // ---------------------------------------------------------------- 2.0.2 renderer
@@ -1462,11 +1516,46 @@ static void setup_dpi(void)
          dpi * 100 / 96);
 }
 
+// ---------------------------------------------------------------- multiplayer glue (NascarNet.cpp)
+
+static const Settings* g_mpSettings;
+static char g_mpGameExe[MAX_PATH], g_mpGameDir[MAX_PATH];
+
+// everything after "-mode multi ...": the host's track/series/laps, this player's own car and display
+static std::string mp_race_args(const std::string& track, const std::string& series, int laps)
+{
+    const Settings& s = *g_mpSettings;
+    std::string seriesArg;
+    if (!series.empty() && series_installed(series, g_mpGameDir)) seriesArg = "-series " + series + " ";
+    char args[1024];
+    snprintf(args, sizeof(args), "-track %s %s-car %s -laps %d %s -width %d -height %d %s",
+             track.c_str(), seriesArg.c_str(), s.car.c_str(), laps,
+             s.fullscreen ? "-fullscreen" : "-windowed", s.width, s.height, s.extraArgs.c_str());
+    return std::string(args);
+}
+
+static unsigned long mp_launch(const std::string& args)
+{
+    if (!PathFileExistsA(g_mpGameExe)) die("NASCAR_GVR.exe was not found:\n%s", g_mpGameExe);
+    DWORD code = run(g_mpGameExe, args.c_str(), g_mpGameDir, true, *g_mpSettings);   // the relay agent lives as long as the race
+    if (g_diag) session_report();
+    return code;
+}
+
 int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
 {
     GetModuleFileNameA(NULL, g_root, MAX_PATH);
     PathRemoveFileSpecA(g_root);
     snprintf(g_ini, sizeof(g_ini), "%s\\nascar_settings.ini", g_root);
+    // developer override (two players on one PC for tests): --settings <file> reads another settings file
+    if (const char* so = strstr(cmdline, "--settings ")) {
+        so += 11;
+        while (*so == ' ') so++;
+        bool q = *so == '"'; if (q) so++;
+        size_t n = 0;
+        while (so[n] && (q ? so[n] != '"' : so[n] != ' ') && n < MAX_PATH - 1) n++;
+        memcpy(g_ini, so, n); g_ini[n] = 0;
+    }
     // All diagnostics go into one LOG folder in the install root - the same folder the
     // GvrIO shim and the SQLite provider write to - so a bug report is "zip the LOG folder".
     char logdir[MAX_PATH];
@@ -1493,6 +1582,9 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     Settings s;
     load_settings(s);
     check_install(s);
+    std::string mpMode = ini_str("Multiplayer", "Mode", "off");
+    for (size_t i = 0; i < mpMode.size(); i++) mpMode[i] = (char)tolower((unsigned char)mpMode[i]);
+    const bool mp = mpMode == "host" || mpMode == "join";
 
     apply_settings(s);
     apply_car_detail();
@@ -1508,7 +1600,8 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
 
     // before use_private_runtime: the builder is a .NET 4 program, and the COMPLUS_* variables that
     // select the private .NET 1.1 for the menus would make it fail ("mscorwks.dll could not be loaded")
-    if (s.mode != "race") build_driver_art(s, amPlayer);
+    if (s.mode != "race" && !mp) build_driver_art(s, amPlayer);
+    if (s.mode != "race" && !mp) apply_link_plugin(mpMode == "lobby", amPlayer);
 
     ensure_db_env();
     use_private_runtime();
@@ -1518,6 +1611,20 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     const bool diag = ini_bool("Debug", "Log", false);
     g_diag = diag;                             // also arms the freeze capture in run()
     if (diag) debug_capture_start();
+
+    if (mp) {
+        // [Multiplayer]: a linked race, straight in (no menus); NascarNet.cpp does the lobby and relay
+        NetSettings ns;
+        ns.mode        = mpMode;
+        ns.relay       = ini_str("Multiplayer", "Relay", "");
+        ns.room        = ini_str("Multiplayer", "Room", "");
+        ns.hostAddress = ini_str("Multiplayer", "HostAddress", "");
+        ns.players     = ini_int("Multiplayer", "Players", 2);
+        ns.track = s.track; ns.series = s.series; ns.laps = s.laps;
+        g_mpSettings = &s;
+        strcpy(g_mpGameExe, gameExe); strcpy(g_mpGameDir, gameDir);
+        return net_run(ns, mp_race_args, mp_launch, logf);
+    }
 
     if (s.mode == "race") {
         // Straight into a session, bypassing the cabinet front end. Handy for

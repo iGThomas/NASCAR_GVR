@@ -134,6 +134,9 @@ In the install folder. The main ones:
   that have no driver select slot as playable drivers; `false` keeps the original 12. Their
   portraits, name plates and numbers can be replaced in `Shell\Textures\Faces`, `Names` and
   `Numbers` (see `Faces\README.txt` there); the next start puts them in the menus
+- `[Multiplayer]` — linked races with other players (beta): the arcade Lobby over the internet
+  (NASCAR Racing, `Mode=lobby`) or straight into a race (`host` / `join`), through a relay server or
+  on the same network: [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md)
 - `[Debug] Log=true` — writes diagnostics to a `LOG` folder in the install root: your PC config
   (CPU, motherboard, GPU + driver version), the launch timeline, a native crash filter for the
   shell and the race, the database log, the menus' and the race's own messages, the race engine's
@@ -191,6 +194,7 @@ The install log is in `%TEMP%\NASCAR_GVR_Install\install.log`. If the race will 
 | `src\` | source for our DLLs and the launcher (see below) |
 | `Tools\` | the disc extractor (`unshield.exe`) and the research tools |
 | `Dependencies\` | Microsoft's .NET 1.1 + SP1 packages (unpacked into the game folder at install time), DXVK |
+| `relay\` | the relay server for internet multiplayer (one Python file, Docker optional) |
 | `docs\findings\` | everything we learned |
 
 **Source (`src\`):**
@@ -198,8 +202,10 @@ The install log is in `%TEMP%\NASCAR_GVR_Install\install.log`. If the race will 
   answers, gamepads, horn, and the private registry.
 - `GvrPrivReg` — the private-registry library (answers registry calls from an ini file).
 - `NascarLaunch` — `NascarLaunch.exe`: applies `nascar_settings.ini`, starts the front end, keeps
-  the windows well-behaved.
+  the windows well-behaved; `NascarNet.cpp` = multiplayer (waiting window and relay link).
 - `GvrSqlite` — the SQLite provider the database layer uses.
+- `GvrLinking` — `GvrLinking.dll`: the menus' cabinet link, rebuilt over the internet relay (the
+  original used IPX); used only with `[Multiplayer] Mode=lobby`.
 - `GvrDongleEmu` — a software dongle back end (research; not installed).
 - `Setup` — `Setup.exe`, the one-file download: unpacks the release package it carries to a fresh
   temporary folder, runs `Install-NASCAR.ps1` and removes the folder again.

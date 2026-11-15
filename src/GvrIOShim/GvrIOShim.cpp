@@ -1299,6 +1299,71 @@ static DWORD WINAPI RendererVerdictThread(LPVOID)
     return 0;
 }
 
+// Linked race through the arcade lobby ([Multiplayer] Mode=lobby): the menus' link (the relay GvrLinking.dll)
+// gives every cabinet a fake address 10.127.0.<n>, because the menus refuse 127.x ones, so a joining
+// race is started with "-client 10.127.0.<n>". The link listens for it on 127.<10+self>.0.<n> (self = our
+// cabinet, 0-9, handed down by the link in GVRLINK_SELF so several menus on one PC never clash) - same
+// length, so the command line is rewritten in place, before the race's startup code copies it. Off with
+// GVRIOSHIM_NO_LINK_ADDRESS=1.
+static void map_link_address(void)
+{
+    if (GetEnvironmentVariableA("GVRIOSHIM_NO_LINK_ADDRESS", NULL, 0)) return;
+    char* cl = GetCommandLineA();                    // the buffer the C runtime parses after DllMain
+    if (!cl) return;
+    char* p = strstr(cl, "-client 10.127.0.");
+    if (!p) return;
+    char self[8] = "0";
+    GetEnvironmentVariableA("GVRLINK_SELF", self, sizeof self);
+    char to[10] = "127.10.0.";
+    if (self[0] >= '0' && self[0] <= '9' && !self[1]) to[5] = self[0];   // 127.1<self>.0.
+    memcpy(p + 8, to, 9);
+    logf("linked race: -client address mapped to the local link (%.24s)", p);
+}
+
+// Linked race, 1.1: each car's label is sprintf(buf, "*%s %d" (server) / "%s %d", "Driver", -playernumber)
+// in NetComm setup (0x465D00), then handed to the network layer, so the others see it too. With
+// [Multiplayer] PlayerName set, the three immediates point at "*%s" / "%s" and the name instead (both formats
+// are used only here). Same rules as the launcher: 15 characters, no | ; ". Empty = "Driver N" as before.
+static char g_playerName[16], g_fmtServer[] = "*%s", g_fmtClient[] = "%s";
+static void patch_player_name(void)
+{
+    char ini[MAX_PATH], raw[64] = "";
+    if (!shim_settings_path(ini, sizeof ini)) return;
+    GetPrivateProfileStringA("Multiplayer", "PlayerName", "", raw, sizeof raw, ini);
+    int n = 0;
+    for (const char* c = raw; *c && n < 15; c++) {
+        unsigned char ch = (unsigned char)*c;
+        if (ch >= 32 && ch < 127 && ch != '|' && ch != ';' && ch != '"' && !(n == 0 && ch == ' ')) g_playerName[n++] = (char)ch;
+    }
+    while (n > 0 && g_playerName[n - 1] == ' ') n--;
+    g_playerName[n] = 0;
+    if (!n) return;
+    if ((BYTE*)GetModuleHandleA(NULL) != (BYTE*)0x00400000) return;
+    struct Site { DWORD at; BYTE op; DWORD was; DWORD now; } sites[] = {
+        { 0x00466001, 0xBE, 0x0072F8C8, (DWORD)(ULONG_PTR)g_fmtServer },   // mov esi, "*%s %d"
+        { 0x00466008, 0xBE, 0x0072F8C0, (DWORD)(ULONG_PTR)g_fmtClient },   // mov esi, "%s %d"
+        { 0x00466018, 0x68, 0x0072BC88, (DWORD)(ULONG_PTR)g_playerName },  // push "Driver"
+    };
+    __try {
+        for (int i = 0; i < 3; i++) {
+            BYTE* p = (BYTE*)(ULONG_PTR)sites[i].at;
+            if (p[0] != sites[i].op || *(DWORD*)(p + 1) != sites[i].was) {
+                logf("player name: bytes differ at %p - not the NASCAR Racing 1.1 race, label stays \"Driver N\"", p);
+                return;
+            }
+        }
+    } __except (EXCEPTION_EXECUTE_HANDLER) { return; }
+    for (int i = 0; i < 3; i++) {
+        BYTE* p = (BYTE*)(ULONG_PTR)sites[i].at + 1;
+        DWORD old = 0;
+        if (!VirtualProtect(p, 4, PAGE_EXECUTE_READWRITE, &old)) return;
+        *(DWORD*)p = sites[i].now;
+        VirtualProtect(p, 4, old, &old);
+        FlushInstructionCache(GetCurrentProcess(), p, 4);
+    }
+    logf("player name: car label in linked races = \"%s\"", g_playerName);
+}
+
 BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
 {
     if (reason == DLL_PROCESS_ATTACH) {
@@ -1351,6 +1416,8 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
         patch_mode_limit();
         if (g_isShell) patch_us_locale();      // before the CLR starts and reads the locale
         block_pc_restart();                    // both processes: the game never restarts the PC
+        if (!g_isShell) map_link_address();
+        if (!g_isShell) patch_player_name();
         if (!g_isShell) patch_horn_stop();
         if (!g_isShell) patch_music_button();
         if (!g_isShell) patch_music_playlist();

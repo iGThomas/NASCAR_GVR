@@ -24,6 +24,7 @@ $files = @(
     "Install.bat", "Install-NASCAR.ps1",
     # NASCAR Racing (v1.1 disc)
     "Install-NASCAR-GVR-Portable.ps1", "Patches\nascar-bytepatches.txt", "Patches\extra-drivers-11.txt", "src\DriverArt\GvrDriverArt.exe",
+    "src\GvrLinking\build\GvrLinking.dll",
     "Deploy\PLUSDE.dll", "Deploy\GvrSqlite.dll", "Deploy\sqlite3.dll", "Deploy\game.db",
     # NASCAR Team Racing (2.0.2 disc)
     "Install-NASCAR-Team-Racing-Portable.ps1", "Patches\nascar-202-bytepatches.txt",
