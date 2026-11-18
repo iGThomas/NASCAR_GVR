@@ -1,234 +1,103 @@
-# NASCAR GVR — the GlobalVR arcade NASCAR games, on a normal Windows PC
+# NASCAR GVR
 
-Installs the GlobalVR arcade cabinet versions of **NASCAR Racing** (v1.1) and **NASCAR Team
-Racing** (2.0.2) as ordinary Windows games - either one, or both side by side. You get the real
-arcade front end (attract screen → driver, transmission and track select →
-race → back to the menus) in one folder of your choice. Xbox and PlayStation controllers work.
-Your PC stays a normal PC: no shell replacement, no autostart, no reboot.
+Play the GlobalVR arcade versions of **NASCAR Racing** (v1.1) and **NASCAR Team Racing** (2.0.2) on a normal Windows PC.
+
+You get the real arcade menus, from the attract screen to the race and back. Xbox, PlayStation and Switch pads work, and so do most PC wheels. Your PC stays a normal PC: no shell replacement, no autostart, no reboot.
 
 <p align="center">
   <a href="https://discord.gg/h7tBkSMbeB"><img src="https://img.shields.io/badge/Discord-join%20the%20community-5865F2?style=for-the-badge&logo=discord&logoColor=white" alt="Join the Discord community"></a>
 </p>
 
-## Quick install
+## What you need
 
-**You need:**
-- Windows 10 or 11, 64-bit (tested on Windows 11)
-- the game disc - as a disc, a mounted ISO or a copied folder (the one with `data1.cab` on it):
+- Windows 10 or 11, 64-bit
+- About 1 GB of free space per game
+- One of these two game discs, as a disc, a mounted ISO or a copied folder:
 
 | Game | Disc | ISO on the Internet Archive |
 |---|---|---|
-| **NASCAR Racing** | GlobalVR **v1.1 game disc**, part number **050-0136-01** | [Nascar_1.1_Game_050-0136-01](https://archive.org/details/isocd-Nascar_1.1_Game_050-0136-01.iso) |
-| **NASCAR Team Racing** | GlobalVR **2.0.2** game disc (build 2.0.2.068) | [nascar-racing-2.0.2.068](https://archive.org/details/nascar-racing-2.0.2.068) |
+| NASCAR Racing | v1.1 game disc, part number 050-0136-01 | [Nascar_1.1_Game_050-0136-01](https://archive.org/details/isocd-Nascar_1.1_Game_050-0136-01.iso) |
+| NASCAR Team Racing | 2.0.2 game disc, build 2.0.2.068 | [nascar-racing-2.0.2.068](https://archive.org/details/nascar-racing-2.0.2.068) |
 
-  **Only these two discs are compatible.** The fixes are made for their files; other versions,
-  such as the v1.5 disc, install but do not run (for example "entry point ... CardSwipeStop ...
-  not found").
-- about 1 GB of free space per game
+Other discs, such as v1.5, do not work.
 
-**Steps:**
+## Install
 
-1. Download **`NASCAR-GVR-<version>-Setup.exe`** from the [Releases](../../releases/latest) page.
-2. Mount the game ISO (right-click it → **Mount**) or insert the disc.
-3. Double-click the Setup file and click **Yes** when Windows asks for administrator rights.
-   Setup is not signed, so Windows may first show "Windows protected your PC": click
-   **More info** → **Run anyway**.
-4. Choose the game: **NASCAR Racing** or **NASCAR Team Racing**. A mounted disc is recognised
-   and already highlighted.
-5. Pick where to install (for example `C:\Games` - a `NASCAR_GVR_1.1` or `NASCAR_GVR_2.0` folder
-   is created inside it). The installer finds the mounted disc by itself, applies every fix and
-   unpacks the .NET 1.1 the menus need into the game folder (nothing of it is installed into
-   Windows). It takes a few minutes and tells you when it is done.
-6. Start **NASCAR Racing** or **NASCAR Team Racing** from the desktop shortcut.
+1. Download **`NASCAR-GVR-<version>-Setup.exe`** from [Releases](../../releases/latest).
+2. Mount the game ISO: right-click it > **Mount**. Or insert the disc.
+3. Double-click the Setup file. Click **Yes** when Windows asks for administrator rights.
+4. If Windows says "Windows protected your PC", click **More info**, then **Run anyway**.
+5. Choose the game. A mounted disc is already selected.
+6. Pick a folder, for example `C:\Games`. The installer does the rest in a few minutes.
+7. Start the game from its desktop shortcut.
 
-Both games can be installed side by side: run Setup again and choose the other one.
+To install both games, run Setup again and choose the other one.
 
-**Zip instead of Setup:** the same release is also offered as **`NASCAR-GVR-<version>.zip`**
-(for example when an antivirus blocks Setup). Unzip it (right-click → **Extract All**) and
-double-click **`Install.bat`**; everything else is the same.
+If your antivirus blocks Setup, download the `.zip` from the same release. Unzip it and double-click `Install.bat`.
 
-> **Antivirus warning?** Add the install folder as an exclusion (Windows Security → Virus & threat
-> protection → Manage settings → Exclusions → Add a folder), and restore `GvrIO.dll` if it was
-> quarantined (if `NascarLaunch.exe` vanished, run Setup again). This is a false alarm: to run an arcade game on a normal PC, small DLLs step in
-> between the game and Windows, and antivirus programs flag that kind of behaviour by default.
+## Update
 
-**Updating:** download the newest Setup, run it and choose the game. It finds the existing
-install by itself (including installs made with older versions) and asks "Update it now?".
-It updates in place - no game disc needed, your settings
-are kept (new settings are added), and it works even if you skipped releases. The installer only
-ever touches a folder it installed itself (marked by `gvr-install.ini`); folders of other games,
-other GVR titles or other NASCAR editions are never changed.
-Your leaderboards, stats and operator settings (`GVR\GvrPlus\game.db`), your settings, pedal
-calibration and race saves are always kept, and copied to `Backup\` in the game folder before
-every install or update.
+Download the newest Setup, run it and choose the game. It finds your install and asks "Update it now?".
 
-**Removing:** Windows Settings → Apps (or Control Panel → Programs and Features) →
-**NASCAR Racing (GlobalVR arcade)** or **NASCAR Team Racing (GlobalVR arcade)** → Uninstall.
-It asks first, copies your leaderboards, settings, calibration and race saves to
-`Documents\NASCAR_GVR Backup`, then removes the game folder, its shortcuts and its entry.
+No disc is needed. Your scores, settings, pedal calibration and race saves are kept. A copy goes to the `Backup` folder in the install folder first.
 
-Screen size, fullscreen and the controller map are in `nascar_settings.ini` in the install
-folder. Advanced: the installer still takes command-line options, e.g.
-`Install.bat -Game 1.1 -Width 1920 -Height 1080` from an Administrator window (`-Game 1.1` or
-`-Game 2.0` skips the game question).
+## Remove
 
-### Controls
+Open Windows Settings > **Apps**. Choose **NASCAR Racing (GlobalVR arcade)** or **NASCAR Team Racing (GlobalVR arcade)**, then **Uninstall**.
+
+Your scores, settings and calibration are copied to `Documents\NASCAR_GVR Backup` first.
+
+## Controls
 
 | | Keyboard | Xbox | PlayStation | Switch Pro |
 |---|---|---|---|---|
 | Steer | `D` / `G` | left stick | left stick | left stick |
-| Gas / brake | `R` / `C` | RT / LT | R2 / L2 | ZR / ZL (on/off) |
+| Gas / brake | `R` / `C` | RT / LT | R2 / L2 | ZR / ZL |
 | Menus: select / back | `S` / `L` | A / B | Cross / Circle | B / A |
 | Menus: up / down | `V` / `M` | D-pad | D-pad | D-pad |
-| Race: start (puts the car back on the track) | `S` | Menu | Options | + |
+| Race: start, or back on track | `S` | Menu | Options | + |
 | Change view / look back | `V` / `L` | RB / LB | R1 / L1 | R / L |
 | Turn the chase camera | numpad 4 6 8 2 | right stick | right stick | right stick |
 | Horn | `J` | B | Circle | A |
-| Gears (manual transmission) | `T` `Y` `U` `I` = gears 1–4 | X / Y = up / down | Square / Triangle = up / down | Y / X = up / down |
+| Gears (manual) | `T` `Y` `U` `I` = 1 to 4 | X / Y = up / down | Square / Triangle = up / down | Y / X = up / down |
 | Music | `M` | D-pad right | D-pad right | D-pad right |
-| Quit the race | hold `V` `L` `S` `M` together | hold D-pad down | hold D-pad down | hold D-pad down |
-| Operator menu | `O` | Menu (in the menus) | Options (in the menus) | − (in the menus) |
+| Quit the race | hold `V` `L` `S` `M` | hold D-pad down | hold D-pad down | hold D-pad down |
+| Operator menu | `O` | Menu, in the menus | Options, in the menus | −, in the menus |
 
-**Switch Pro Controller:** USB or Bluetooth. Buttons follow the same
-*positions* as the other pads, so A and B are swapped compared with Switch games. ZL / ZR are on/off; for
-analog gas and brake set `Pedals = rightstick` under `[Controller]` in `nascar_settings.ini`
-(right stick up = gas, down = brake). Steam can also present the pad as an Xbox controller.
+Wheels, pedals, shifters and calibration: [docs/WHEELS.md](docs/WHEELS.md).
 
-**Steering wheels:** Logitech (Driving Force GT, G25, G27, G29, G920, G923), Thrustmaster and most
-other wheels Windows lists as a driving device drive with their wheel and pedals, set up
-automatically by model, with or without Logitech G HUB. Force feedback is the arcade's own
-(centring, damping, grass and rumble-strip vibration, collision jolts). Gas and brake the wrong way
-round? Set `SwapPedals = true` under `[Wheel]` in `nascar_settings.ini`. With `[Debug] Log=true`
-the log lists every controller and names the wheel, its pedal layout and every button number it
-reports.
+## Settings
 
-**Direct-drive bases, separate pedals, shifters and button boxes:** just plug them in. Steering
-comes from the wheel, gas and brake from the pedal box (found by name, or by the first pedal you
-press), gears from a separate shifter (found by name, or by holding two gears for a couple of seconds
-each - remembered after that; H-pattern or sequential, recognised from how it is used; select
-Manual on the transmission screen), and a separate rim or button box adds its buttons like the
-wheel's. A base that another program holds for force feedback is still read for steering.
+All settings are in `nascar_settings.ini` in the install folder. Each one has a short note. Change a value, save, and start the game.
 
-**Pedal calibration works like the arcade's:** the first time the game sees your pedals it shows
-"Calibrate the accelerator and brake" - press each pedal all the way down once. The result is
-saved (`nascar_calibration.ini`) and used by every race, so load-cell brakes and pedals limited in
-their own software still reach 100 %. To calibrate again: operator menu (`O`) -> Control Test ->
-hold **Start + Music**, then press each pedal fully (the same screen shows the steering wheel
-following yours - a quick check that the wheel works). Calibration done in the wheel or pedal maker's
-software (Fanatec, Moza, Thrustmaster ...) applies as usual. Force feedback works on bases Windows lists as a joystick too. With `[Debug] Log=true`
-the log's `controls:` line says what each device became; a wrong guess is fixed with one line under
-`[Wheel]` (`PedalDevice`, `ShifterDevice`, `ShifterMode`, `ButtonBox1`). Not yet tested on such
-hardware.
-
-Every control, and how to remap the pad: [docs/findings/NASCAR_CONTROLS.md](docs/findings/NASCAR_CONTROLS.md).
-
-### Settings — `nascar_settings.ini`
-
-In the install folder. The main ones:
-
-- `[Display]` — `Width`, `Height`, `Fullscreen`, `Borderless`; `Renderer` for the menus (`auto`
-  picks what works on this PC: Team Racing OpenGL when available, NASCAR Racing Direct3D 7 unless
-  this PC fails the game's Direct3D test, then OpenGL; `opengl` / `directx` force one)
-- `[Controller]` / `[Frontend]` — the gamepad button map for the race and the menus
-- `[Cabinet] ExtraDrivers` — NASCAR Racing: `true` (default) adds the 19 race cars on the disc
-  that have no driver select slot as playable drivers; `false` keeps the original 12. Their
-  portraits, name plates and numbers can be replaced in `Shell\Textures\Faces`, `Names` and
-  `Numbers` (see `Faces\README.txt` there); the next start puts them in the menus
-- `[Multiplayer]` — linked races with other players (beta): the arcade Lobby over the internet
-  (NASCAR Racing, `Mode=lobby`) or straight into a race (`host` / `join`), through a relay server or
-  on the same network: [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md)
-- `[Debug] Log=true` — writes diagnostics to a `LOG` folder in the install root: your PC config
-  (CPU, motherboard, GPU + driver version), the launch timeline, a native crash filter for the
-  shell and the race, the database log, the menus' and the race's own messages, the race engine's
-  traces, any overlay or hook DLLs loaded into the game, Windows' crash records for the game, and
-  (Team Racing) the menus' script errors. Reproduce the problem once, then zip the `LOG` folder.
-
-### Installer options
-
-| Option | What it does |
+| Section | What it sets |
 |---|---|
-| `-InstallRoot D:\Games\NASCAR` | install folder (otherwise you are asked) |
-| `-DiscPath E:\` | where the disc is (otherwise you are asked) |
-| `-Width 1920 -Height 1080` | screen size |
-| `-Fullscreen` | exclusive fullscreen instead of a window |
-| `-Dxvk` | use DXVK (Direct3D 9 on Vulkan) if the race misbehaves on your GPU |
-| `-NoShortcut` | no desktop / Start-menu shortcut |
-| `-NoGui` | typed questions instead of the folder pickers |
-| `-DryRun` | show what would happen, change nothing |
-| `-Uninstall` | remove the install |
+| `[Display]` | Screen size, window or fullscreen, race text size, graphics options. |
+| `[Graphics]` | Race detail. |
+| `[Cabinet]` | Music volume, the 19 extra drivers in NASCAR Racing. |
+| `[Multiplayer]` | Your name and online play. See [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md). |
+| `[Controller]`, `[Frontend]` | Pad buttons in the race and in the menus. |
+| `[Wheel]` | Wheel, pedal and shifter overrides. |
+| `[Debug]` | `Log = true` writes a `LOG` folder for bug reports. |
 
-The install log is in `%TEMP%\NASCAR_GVR_Install\install.log`. If the race will not start, read
-`Game\LOG\trace00N.txt` in the install folder first.
+## Help
 
----
+Something wrong? Start with [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md). It also explains how to report a problem.
 
-## What we found (short version)
+Questions, or want to show your setup? [Join the Discord](https://discord.gg/h7tBkSMbeB).
 
-- The cabinet runs **two programs**: an Anark front end (`AMPlayer.exe`) that launches the race
-  (`NASCAR_GVR.exe`). Both had to work on a PC.
-- The race had **three silent startup crashes**: a missing log folder, seven folders renamed by
-  the disc extractor, and a deadlock in the cabinet I/O DLL. It also checks a **HASP dongle**,
-  which is satisfied in memory without modifying the game.
-- The front end checks the dongle, the I/O board, the coin monitor and the pedals, and **freezes
-  silently** whenever a script calls cabinet hardware that is missing.
-- The front end **changed the PC's time zone**, treated drive `D:` as the CD drive and ran the
-  NVIDIA gamma tool. All of that is patched out.
-- The **SQL Server database** is replaced by a single SQLite file, and the **registry** by an ini
-  file in the install folder, so the install is portable and needs no other game files elsewhere.
-- **Gamepads** are added at the cabinet I/O layer, so they drive the menus and the race just like
-  the arcade wheel and buttons.
+## More
 
-**All findings, one point at a time with explanations:** [docs/findings/](docs/findings/README.md)
-
----
-
-## What is in this repository
-
-| Folder | Contents |
+| Page | What it covers |
 |---|---|
-| `Install.bat`, `Install-NASCAR.ps1` | the start: asks which game and runs its installer |
-| `Install-NASCAR-GVR-Portable.ps1` | the NASCAR Racing (v1.1) installer |
-| `Install-NASCAR-Team-Racing-Portable.ps1` | the NASCAR Team Racing (2.0.2) installer |
-| `Patches\` | the byte patches the installers apply to the original files (checked before writing) |
-| `Deploy\`, `Deploy-2.0.2\` | the SQLite database layer and the prepared `game.db`, per game. `Deploy\DDrawCompat\` holds DDrawCompat v0.7.2, a Direct3D 7 helper for the menus |
-| `src\` | source for our DLLs and the launcher (see below) |
-| `Tools\` | the disc extractor (`unshield.exe`) and the research tools |
-| `Dependencies\` | Microsoft's .NET 1.1 + SP1 packages (unpacked into the game folder at install time), DXVK |
-| `relay\` | the relay server for internet multiplayer (one Python file, Docker optional) |
-| `docs\findings\` | everything we learned |
-
-**Source (`src\`):**
-- `GvrIOShim` — the drop-in `GvrIO.dll`: startup fix, dongle check, screen-size limit, I/O board
-  answers, gamepads, horn, and the private registry.
-- `GvrPrivReg` — the private-registry library (answers registry calls from an ini file).
-- `NascarLaunch` — `NascarLaunch.exe`: applies `nascar_settings.ini`, starts the front end, keeps
-  the windows well-behaved; `NascarNet.cpp` = multiplayer (waiting window and relay link).
-- `GvrSqlite` — the SQLite provider the database layer uses.
-- `GvrLinking` — `GvrLinking.dll`: the menus' cabinet link, rebuilt over the internet relay (the
-  original used IPX); used only with `[Multiplayer] Mode=lobby`.
-- `GvrGlu` — `glu32.dll` next to the menus: makes them load `GvrIO.dll` by themselves at start. Every glu
-  function passes on to Windows' own `glu32.dll`.
-- `GvrDongleEmu` — a software dongle back end (research; not installed).
-- `Setup` — `Setup.exe`, the one-file download: unpacks the release package it carries to a fresh
-  temporary folder, runs `Install-NASCAR.ps1` and removes the folder again.
-
-The prebuilt binaries are included. To rebuild them you need Visual Studio (C++ desktop
-workload): run `build.cmd` in each `src\` folder. To make a release download, run
-`Tools\Make-Release.ps1 -Version <x.y.z>`: it packs only what the two installers need into
-`dist\NASCAR-GVR-<x.y.z>.zip` and adds the same package to `Setup.exe` as
-`dist\NASCAR-GVR-<x.y.z>-Setup.exe`; both are uploaded to a GitHub Release.
-`Tools\Make-BytePatches.py` / `Make-BytePatches-202.py` regenerate `Patches\nascar-bytepatches.txt`
-/ `nascar-202-bytepatches.txt` from an original and a patched install.
-
-## Community & help
-
-Questions, bug reports, or want to show off your setup? **[Join the Discord](https://discord.gg/h7tBkSMbeB)** — https://discord.gg/h7tBkSMbeB
-
-If the game will not start, bring these and someone can usually spot it quickly:
-- `install.log` from `%TEMP%\NASCAR_GVR_Install\`
-- after setting `[Debug] Log=true` in `nascar_settings.ini` and launching once, the `LOG` folder from the install root
+| [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Problems and fixes |
+| [docs/WHEELS.md](docs/WHEELS.md) | Wheels, pedals, shifters, pads |
+| [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md) | Online and network races |
+| [docs/MENU_TEXTURES.md](docs/MENU_TEXTURES.md) | Changing the textures in the menus |
+| [docs/MODS.md](docs/MODS.md) | Every change compared with the arcade |
+| [docs/DEVELOPERS.md](docs/DEVELOPERS.md) | Building, repository layout, installer options |
+| [docs/findings/](docs/findings/README.md) | Technical findings |
 
 ## Disclaimer
 
-This is an unofficial fan project for preserving arcade hardware software. NASCAR Racing and
-NASCAR Team Racing are the property of their respective owners.
+This is an unofficial fan project to preserve arcade software. NASCAR Racing and NASCAR Team Racing belong to their respective owners.

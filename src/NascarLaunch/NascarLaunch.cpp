@@ -594,6 +594,42 @@ static void build_driver_art(const Settings& s, const char* amPlayer)
     CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
 }
 
+// Menu texture replacements (both games): players replace textures of the menu scenes with Tools\GvrMenuTextures.exe,
+// which keeps them in Shell\Mods\<scene>\. "apply" puts them into the scenes (and puts the originals back when they
+// are removed); it only rewrites a scene when a replacement or the scene changed. Run only when there is something to
+// do, because starting it costs about a second. A failure is logged and the menus start anyway.
+static void apply_menu_textures(void)
+{
+    char exe[MAX_PATH], mods[MAX_PATH], pat[MAX_PATH];
+    snprintf(exe, sizeof(exe), "%s\\Tools\\GvrMenuTextures.exe", g_root);
+    snprintf(mods, sizeof(mods), "%s\\Shell\\Mods", g_root);
+    snprintf(pat, sizeof(pat), "%s\\Shell\\*.am.nomods", g_root);
+    WIN32_FIND_DATAA fd; HANDLE f = FindFirstFileA(pat, &fd);
+    bool restored = f != INVALID_HANDLE_VALUE;
+    if (restored) FindClose(f);
+    if (!PathIsDirectoryA(mods) && !restored) return;
+    if (!PathFileExistsA(exe)) { logf("menu textures: replacements found but Tools\\GvrMenuTextures.exe is missing"); return; }
+    char cmd[MAX_PATH * 2 + 32];
+    snprintf(cmd, sizeof(cmd), "\"%s\" apply \"%s\"", exe, g_root);
+    STARTUPINFOA si = { sizeof(si) }; si.dwFlags = STARTF_USESHOWWINDOW; si.wShowWindow = SW_HIDE;
+    PROCESS_INFORMATION pi = { 0 };
+    DWORD t0 = GetTickCount();
+    if (!CreateProcessA(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, g_root, &si, &pi)) {
+        logf("menu textures: could not start %s (error %lu)", exe, GetLastError());
+        return;
+    }
+    DWORD code = 0;
+    if (WaitForSingleObject(pi.hProcess, 60000) == WAIT_TIMEOUT) {
+        TerminateProcess(pi.hProcess, 3); code = 3;
+        logf("menu textures: no answer after 60 s - stopped");
+    } else {
+        GetExitCodeProcess(pi.hProcess, &code);
+        logf("menu textures: exit %lu after %lu ms%s", code, GetTickCount() - t0,
+             code == 0 ? "" : " (see LOG\\gvrmenutextures.log)");
+    }
+    CloseHandle(pi.hThread); CloseHandle(pi.hProcess);
+}
+
 // Anark Client 3.0 preferences (GvrShell.reg's HKCU part) - per-user, no rights needed.
 static void ensure_anark_prefs(void)
 {
@@ -2001,6 +2037,7 @@ int WINAPI WinMain(HINSTANCE, HINSTANCE, LPSTR cmdline, int)
     // before use_private_runtime: the builder is a .NET 4 program, and the COMPLUS_* variables that
     // select the private .NET 1.1 for the menus would make it fail ("mscorwks.dll could not be loaded")
     if (s.mode != "race" && !mp) build_driver_art(s, amPlayer);
+    if (s.mode != "race" && !mp) apply_menu_textures();       // also a .NET 4 program: before use_private_runtime
     if (s.mode != "race" && !mp) apply_link_plugin(mpMode == "lobby", amPlayer);
 
     ensure_db_env();

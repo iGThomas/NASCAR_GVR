@@ -52,6 +52,7 @@ others. Tested: MP3, 44.1 kHz, stereo, 128 and 320 kbps. Not tested: 48 kHz, mon
 | Some antivirus programs blocked the way the launcher put its fixes into the menus | The menus now load the fixes by themselves, through `Shell\bin\glu32.dll`. If that fails, the launcher uses the older way and logs it. Setting: `[Launcher] Preload` |
 | Windows' Smart App Control blocked one of the game's unsigned files, and the game failed with no message | After each session the launcher checks Windows' block log for the game's files. It logs them and names the blocked file in a message |
 | Race text (place, lap, speed, lap times) got smaller as the screen got bigger, while the rest of the race display grew | The launcher sizes the race fonts to the screen at every start. The original `HUD.ini` is kept as `HUD.ini.oem`. Setting: `[Display] HudText` |
+| Textures in the menus could only be changed by editing the scene files by hand, and an update undid it | `Tools\GvrMenuTextures.exe` shows every menu texture and replaces it with your own. Replacements are kept in `Shell\Mods` and survive updates. See [MENU_TEXTURES.md](MENU_TEXTURES.md) |
 | Menu music silent (cabinet path `C:\NASCAR\Shell\Audio`) | Not in the package yet: `NASCAR_Selection.am` has to point at the install folder |
 | Meathook played as silence (an 18 KB album picture inside the file) | Picture removed from the file's tag; music and file size unchanged |
 | Steering pulled to one side, half throttle without a wheel | Shim answers the steering and pedals from the keyboard / pad |
@@ -117,4 +118,5 @@ database are described in `docs/findings/NASCAR_FINDINGS.md`.
 | Some antivirus programs blocked the way the launcher put its fixes into the menus | The menus now load the fixes by themselves, through `Shell\bin\glu32.dll`. If that fails, the launcher uses the older way and logs it. Setting: `[Launcher] Preload` |
 | Windows' Smart App Control blocked one of the game's unsigned files, and the game failed with no message | After each session the launcher checks Windows' block log for the game's files. It logs them and names the blocked file in a message |
 | Race text (place, lap, speed, lap times) got smaller as the screen got bigger, while the rest of the race display grew | The launcher sizes the race fonts to the screen at every start. The original `HUD.ini` is kept as `HUD.ini.oem`. Setting: `[Display] HudText` |
+| Textures in the menus could only be changed by editing the scene files by hand, and an update undid it | `Tools\GvrMenuTextures.exe` shows every menu texture and replaces it with your own. Replacements are kept in `Shell\Mods` and survive updates. See [MENU_TEXTURES.md](MENU_TEXTURES.md) |
 
