@@ -1790,6 +1790,59 @@ static DWORD run(const char* exe, const char* args, const char* cwd, bool wait, 
 // HUD.ini.oem) with each font SIZE times the race height / 768. The race renders each new size once and keeps it
 // as "<font>-<size>-400.bmp/.fnt" next to HUD.ini (tested up to 169 points: sharp, all characters).
 // auto = grow with the screen, original = the arcade's sizes, or a number such as 1.5 = that many times the arcade's.
+//
+// A size the game has no ready-made picture for is drawn from the Windows font named after the file. If Windows lacks
+// that font the race stops with "UNABLE TO CREATE THE SPECIFIED FONT". Team Racing's MPH label uses such a font
+// (NPC_MYRIADPROSB, not on the disc). Those fonts keep their ready-made SIZE and grow through SCALE instead.
+static bool windows_has_face(const std::string& face)
+{
+    LOGFONTA lf = {};
+    lf.lfHeight = -20;
+    lf.lfCharSet = DEFAULT_CHARSET;
+    strncpy(lf.lfFaceName, face.c_str(), LF_FACESIZE - 1);
+    HFONT font = CreateFontIndirectA(&lf);
+    if (!font) return false;
+    char got[LF_FACESIZE] = "";
+    HDC dc = CreateCompatibleDC(NULL);
+    if (dc) {
+        HGDIOBJ old = SelectObject(dc, font);
+        GetTextFaceA(dc, sizeof got, got);
+        SelectObject(dc, old);
+        DeleteDC(dc);
+    }
+    DeleteObject(font);
+    return _stricmp(got, face.c_str()) == 0;
+}
+
+// The face the race asks Windows for: the .ttf file name up to its first dot. Empty for any other kind of font.
+static std::string hud_font_face(const std::string& line)
+{
+    size_t a = line.find("File=\"");
+    if (a == std::string::npos) return "";
+    a += 6;
+    size_t b = line.find('"', a);
+    if (b == std::string::npos || b - a < 5) return "";
+    std::string file = line.substr(a, b - a);
+    if (_stricmp(file.c_str() + file.size() - 4, ".ttf") != 0) return "";
+    size_t slash = file.find_last_of("\\/");
+    if (slash != std::string::npos) file = file.substr(slash + 1);
+    return file.substr(0, file.find('.'));
+}
+
+// SCALE=(x,y) -> SCALE=(x*f,y*f). Returns false when the line has no readable SCALE.
+static bool scale_hud_font(std::string& line, double f)
+{
+    size_t a = line.find("SCALE=(");
+    if (a == std::string::npos) return false;
+    size_t b = line.find(')', a);
+    double x = 0, y = 0;
+    if (b == std::string::npos || sscanf(line.c_str() + a, "SCALE=(%lf,%lf)", &x, &y) != 2) return false;
+    char num[64];
+    snprintf(num, sizeof num, "SCALE=(%.3f,%.3f)", x * f, y * f);
+    line = line.substr(0, a) + num + line.substr(b + 1);
+    return true;
+}
+
 static void apply_hud_text(const Settings& s)
 {
     char hud[MAX_PATH], oem[MAX_PATH];
@@ -1812,6 +1865,7 @@ static void apply_hud_text(const Settings& s)
     // each "elem=FONT" line: SIZE=n -> SIZE=round(n*f)
     std::string out; out.reserve(text.size() + 64);
     int changed = 0;
+    std::string checked, missing;   // "|face|" lists, so each font is tested and logged once
     for (size_t pos = 0; pos < text.size(); ) {
         size_t eol = text.find('\n', pos); if (eol == std::string::npos) eol = text.size(); else eol++;
         std::string line = text.substr(pos, eol - pos);
@@ -1824,9 +1878,21 @@ static void apply_hud_text(const Settings& s)
                 if (e > d) {
                     int n = atoi(line.substr(d, e - d).c_str());
                     int m = (int)(n * f + 0.5); if (m < 8) m = 8;
-                    if (m != n) changed++;
-                    char num[16]; snprintf(num, sizeof num, "%d", m);
-                    line = line.substr(0, d) + num + line.substr(e);
+                    std::string face = hud_font_face(line), tag = "|" + face + "|";
+                    if (m != n && !face.empty() && checked.find(tag) == std::string::npos) {
+                        checked += tag;
+                        if (!windows_has_face(face)) {
+                            missing += tag;
+                            logf("hud text: Windows has no '%s' font, so it keeps its ready-made size and is enlarged as a picture", face.c_str());
+                        }
+                    }
+                    if (m != n && !face.empty() && missing.find(tag) != std::string::npos) {
+                        if (scale_hud_font(line, f)) changed++;
+                    } else {
+                        if (m != n) changed++;
+                        char num[16]; snprintf(num, sizeof num, "%d", m);
+                        line = line.substr(0, d) + num + line.substr(e);
+                    }
                 }
             }
         }

@@ -19,11 +19,13 @@ Where a change has a setting, it is in `nascar_settings.ini`, and the original b
 | Most detailed car models at every distance. The car body and crash debris always use their best model. Tyres, driver and shadows keep their steps. The lists are made from the disc's own model lists at install time. | Cars switch to simpler 3D models with distance | `[Graphics] MaxCarDetail=true` |
 | Per-car rims: the race reads `<paint folder>\<paint name>rims.bmp` (256 x 256) after the shared `wcrims.bmp`. Blue rims for the #2 car come with the game: `Dodge\2\2-01\2-01rims.bmp`. | Every car used the same grey rims | None |
 | Race text (place, lap, speed, lap times) grows with the screen. The launcher sizes the race fonts at every start. The original `HUD.ini` is kept as `HUD.ini.oem`. | Fonts of a fixed size, so the text got smaller on bigger screens | `[Display] HudText` |
+| Coin mode for home-built cabinets: keys or USB buttons act as coin slots and a service button. Credits, prices, earnings and the operator's coin pages work without a GlobalVR I/O board. See `docs/ARCADE.md`. | GlobalVR I/O board and coin monitor program | `[Coin] Enabled = true`. Off by default, so Free Play does not change. |
 
 ### Fixes
 
 | Problem on a PC | Fix | Setting or switch |
 |---|---|---|
+| The operator's Collection page always showed 0.00 earnings. Payments and the page's search used different date formats. | The database layer compares dates by value | None |
 | Menus never showed a window on some PCs, seen on Windows 10 22H2 and Windows 10 IoT LTSC 24H2. A menus library starts .NET while Windows' DLL-loading lock is held. .NET's first COM call then waited forever. | Safe start: before the menus load anything, the GvrIO shim prepares COM with one round trip. It then starts the install's .NET itself, on threads of its own. The menus' DLL loads wait for it, at most 30 s. *In memory.* | `[Launcher] SafeStart=false` turns it off |
 | Menus never started, or hung with no window. The .NET 1.1 installed into Windows was damaged or could not be installed. Its SP1 package needs an older .NET to unpack, which a clean Windows 10 or 11 does not have. | The installer unpacks .NET 1.1 SP1 into the game folder (`Runtime\`) and copies its libraries next to the front end. The launcher starts the menus on that copy. Nothing of .NET 1.1 is installed into Windows. A copy already there is left alone and not used. | `Install.bat -RepairDotNet` unpacks the game's copy again |
 | On laptops with two graphics chips, the game could run on the slower built-in chip. There, the menus' graphics tests can fail. | The launcher asks Windows to use the faster chip for the game. A choice made in Windows' Graphics settings is kept. | `[Display] Gpu` |
@@ -114,6 +116,8 @@ Tested: MP3, 44.1 kHz, stereo, 128 and 320 kbps. Not tested: 48 kHz, mono, varia
 | Meathook played as silence, because of an 18 KB album picture inside the file | Picture removed from the file's tag. Music and file size are unchanged. | None |
 | Steering pulled to one side, and half throttle without a wheel | The shim answers the steering and pedals from the keyboard or pad | None |
 | Menus scrolled by themselves without a cabinet wheel | The shim owns the menu selection | None |
+| Driver and track lists kept scrolling with no wheel touched, so the gas pedal could not pick a driver | The lists start still and stop when the stick or key is released | None |
+| With coins on, a race cost 0 credits. The database lacks the price plan the menus look up. | Coin mode adds the plan once: four coins = $1.00 = one race. A copy of the database is kept as `game.db.before-coin`. | `[Coin] Enabled = true` |
 | Pad buttons ignored, because 2.0.2's input DLL overwrites them | The shim adds them where 2.0.2 reads the keyboard | None |
 | Operator menu slow: a 1 s wait for a coin monitor per query | `NASCARPlugIn.dll` patched in the file: no wait | None |
 | Pricing and billing loop | Database built from the 2.0.2 disc with operator pricing and free play | None |

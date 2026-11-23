@@ -78,6 +78,7 @@ All settings are in `nascar_settings.ini` in the install folder. Each one has a 
 | `[Multiplayer]` | Your name and online play. See [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md). |
 | `[Controller]`, `[Frontend]` | Pad buttons in the race and in the menus. |
 | `[Wheel]` | Wheel, pedal and shifter overrides. |
+| `[Coin]` | Coin slots for a home-built cabinet. Off by default. See [docs/ARCADE.md](docs/ARCADE.md). |
 | `[Debug]` | `Log = true` writes a `LOG` folder for bug reports. |
 
 ## Help
@@ -94,6 +95,7 @@ Questions, or want to show your setup? [Join the Discord](https://discord.gg/h7t
 | [docs/WHEELS.md](docs/WHEELS.md) | Wheels, pedals, shifters, pads |
 | [docs/MULTIPLAYER.md](docs/MULTIPLAYER.md) | Online and network races |
 | [docs/MENU_TEXTURES.md](docs/MENU_TEXTURES.md) | Changing the textures in the menus |
+| [docs/ARCADE.md](docs/ARCADE.md) | Building an arcade cabinet with coin slots |
 | [docs/MODS.md](docs/MODS.md) | Every change compared with the arcade |
 | [docs/DEVELOPERS.md](docs/DEVELOPERS.md) | Building, repository layout, installer options |
 | [docs/findings/](docs/findings/README.md) | Technical findings |

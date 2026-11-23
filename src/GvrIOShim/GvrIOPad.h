@@ -25,6 +25,9 @@ bool shim_settings_path(char* out, size_t n);
 // Shared with GvrIOShim.cpp: the GVRIOSHIM_LOG trace (gvrioshim.log next to the exe).
 void shim_log(const char* fmt, ...);
 
+// GvrIOCoin.cpp: the menus' coin monitor. Does nothing unless [Coin] Enabled = true.
+void coin_attach(void);
+
 // GvrIOReg.cpp: answer HKLM\SOFTWARE\GlobalVR and \gvr from <install>\nascar_registry.ini.
 // Call from DllMain after pad_attach (it needs the install folder).
 void reg_attach(void);

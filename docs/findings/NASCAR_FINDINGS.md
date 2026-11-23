@@ -1740,3 +1740,92 @@ off.
 
 The freeze capture now also logs the owner of the loading lock (PEB `LoaderLock`, owning thread) and
 48 stack frames per thread.
+
+
+## 21. Coin monitor (2026-11-23)
+
+On a cabinet, `GVRCoinMonitor.exe` counts the coins and the menus ask it for the credit total. The
+GvrIO shim can now do that job (`src\GvrIOShim\GvrIOCoin.cpp`). It runs only with
+`[Coin] Enabled = true`, so Free Play installs behave as before.
+
+### 21.1 How the menus talk to it
+
+Each program has a mailbox made of three named objects: `<name>_map`, `<name>_event` and
+`<name>_mutex`. The map holds the message size, a count, and up to 20 connected names of 20 bytes.
+A client adds its name to the server's list and sets the server's event.
+
+Each direction then has its own queue, named `<from>_to_<to>`. Its map is `10 * size + 128` bytes:
+
+| Offset | Content |
+|---|---|
+| +0 | Message size. Both sides default to 64 bytes |
+| +4 | Messages waiting, at most 10 |
+| +8 + 12 * n | Message n: length, data offset, `GetTickCount` when sent |
+| +128 + offset | Message data |
+
+A message is an array of 32-bit values: unused, command, payload length, then the arguments. The
+receiver drops messages older than 500 ms. A reply is command 2008 with a value, or 2009 with a
+status code.
+
+### 21.2 Commands
+
+Credits have two slots, used as a bit mask: 1 = paid coins, 2 = service credits. A mask of 0 or
+less, or of 255 or more, means both. Spending takes service credits first.
+
+| Command | Arguments | Effect and reply |
+|---|---|---|
+| 2004 | amount | Spend from both slots. Status 1 if there is not enough |
+| 2005 | | Empty both slots, reply with the old total |
+| 2006 | pulses, meter | Add pulses to a mechanical meter |
+| 2010 | | Total credits |
+| 2021 | mask, amount | Spend from the masked slots |
+| 2022 | mask | Empty the masked slots, reply with the old count |
+| 2023 | mask | Credits in the masked slots |
+| 2024 | mask, amount | Add credits. Service wins if both bits are set |
+| 2032 | mask | Read and clear the spent counters |
+| 2033 | mask | Read the spent counters |
+| 2040 | on / off | Allow service credits. This command has no reply |
+| 2041 | input | Coins counted on input 0 to 3. Status 8 for another number |
+| 2042 | | Team Racing only: I/O board status |
+| 2043 | input | Team Racing only: resettable count of input 0 to 4 |
+| 2044 | input | Team Racing only: reset that count |
+| 2045 | input | Team Racing only: lifetime count of input 0 to 4 |
+
+The original keeps credits in `C:\Hercules\CoinCount.bin` and in HKLM. The shim keeps them in
+`Game\Save\nascar_coins.ini`, which an update preserves.
+
+### 21.3 The two wait patches
+
+The installed `HerculesPlugIn.dll` (`0x4904`) and `NASCARPlugIn.dll` (1.1 `0x2D0AC`, 2.0.2
+`0x3251C`) have their reply wait set to zero, because no monitor runs (section 11.7). With a zero
+wait a client never sees a reply. In coin mode the shim restores the original bytes in memory. The
+files on disk stay as installed.
+
+The restored wait also covers `GVRVolumeMonitor`. The menus read `Gvr.MasterVolume` from it every
+five frames, so an unanswered read would stall them for a second each time. The shim answers that
+name too, always with 0, which is the value the menus get without a monitor.
+
+### 21.4 The Collections page and dates
+
+The Collections page finds unpaid-out payments with a filter such as
+`CreationDate<='11/23/2026 6:26:50 PM'`. SQL Server compares dates by value, but SQLite compares
+text. The database holds both `2026-11-23 18:08:41` and `11/23/2026 6:08:41 PM`, so the page found
+no payments and showed 0.00. GvrSqlite now converts both sides of a date comparison to the first
+form.
+
+### 21.5 Team Racing's driver and track lists
+
+These screens set `Gvr.SelectionRangeX = 5` and read the slot as a speed: 2 stops the list, 1 and 3
+move it slowly, 0 and 4 move it fast. A cabinet wheel rests in slot 2 and springs back to it. With no
+wheel the slot stayed at 0, so the list scrolled by itself and could not confirm a driver. The shim
+now starts these screens in slot 2 and returns to it when the stick or key is released. It tells them
+from other five-slot screens by `Gvr.SelectionFF = 0` (GvrIO message `0x1F`).
+
+### 21.6 Team Racing's price plan
+
+The 2.0.2 database has price plans 15003 and 15004. Its menus look up plan 15000, so the price lookup
+fails. The on-screen price then falls back to 1 credit, while the charge falls back to 0.
+
+With `[Coin] Enabled = true`, GvrSqlite adds plan 15000 once, when it first opens the database. The
+plan copies 15004's prices, books to the existing categories 15000 and 15003, and sets 4 credits per
+dollar. A copy of the database is kept as `game.db.before-coin`. Free Play installs are not changed.

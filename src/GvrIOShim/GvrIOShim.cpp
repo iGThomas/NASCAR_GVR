@@ -717,6 +717,7 @@ typedef void* (__cdecl *AmEventFn)(void*);
 static AmEventFn     g_amCb = 0;               // AMPlayer's event callback (from Initialize)
 static volatile LONG g_selOwn = -1;            // -1 not decided yet, 1 = the shim owns the slot
 static volatile LONG g_selX = 0, g_selY = 0, g_rangeX = 1, g_rangeY = 1;
+static volatile LONG g_selFF = 0;              // Gvr.SelectionFF. Five slots with 0 = a speed screen
 
 static void* __cdecl sel_filter_cb(void* m)
 {
@@ -756,6 +757,15 @@ static DWORD WINAPI sel_thread(LPVOID)
         }
         if (wheel_steers()) {
             x = (v + 127) * range / 255;       // a wheel picks by position, like the cabinet's
+        } else if (range == 5 && g_selFF == 0) {
+            // Driver and track lists read the slot as a speed: 2 = stop, 1 / 3 slow, 0 / 4 fast.
+            // A released stick or key must stop the list, as a cabinet wheel springs back.
+            static DWORD holdSince = 0;
+            DWORD now = GetTickCount();
+            if (v == 60 || v == -60) { if (!holdSince) holdSince = now ? now : 1; } else holdSince = 0;
+            bool fast = v >= 100 || v <= -100 || (holdSince && now - holdSince > 700);
+            x = v < -30 ? (fast ? 0 : 1) : v > 30 ? (fast ? 4 : 3) : 2;
+            lastDir = 0;
         } else {
             int dir = v < -30 ? -1 : v > 30 ? 1 : 0;
             DWORD now = GetTickCount();
@@ -938,6 +948,7 @@ void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
         if (InterlockedExchange(w, 1) == 0) logf("msg 0x%X needs the IO board object (none) - answering NULL", id);
         return 0;
     }
+    if (g_isShell && id == 0x1F) InterlockedExchange(&g_selFF, ((int*)msg)[2]);
     if (g_isShell && g_amCb && id >= 0x0F && id <= 0x14 && oemFn) {
         // Decided at the first selection message; while the OEM owns it, a PC wheel or pedal box
         // found later (the controller scan runs in the background) still takes over - OEM
@@ -962,7 +973,11 @@ void* Gvr::Zeus::GvrIO::GvrIOMessageSend(Gvr::Zeus::GvrIO::sMessage* msg)
             LONG v = f[2];
             if (id == 0x11) InterlockedExchange(&g_selX, v < 0 ? 0 : v);
             if (id == 0x12) InterlockedExchange(&g_selY, v < 0 ? 0 : v);
-            if (id == 0x13) { InterlockedExchange(&g_rangeX, v < 1 ? 1 : v); if (g_selX >= g_rangeX) InterlockedExchange(&g_selX, g_rangeX - 1); }
+            if (id == 0x13) {
+                InterlockedExchange(&g_rangeX, v < 1 ? 1 : v);
+                if (v == 5) InterlockedExchange(&g_selX, 2);   // where a cabinet wheel rests
+                if (g_selX >= g_rangeX) InterlockedExchange(&g_selX, g_rangeX - 1);
+            }
             if (id == 0x14) InterlockedExchange(&g_rangeY, v < 1 ? 1 : v);
             return rs;
         }
@@ -1421,6 +1436,7 @@ BOOL WINAPI DllMain(HINSTANCE hInst, DWORD reason, LPVOID)
         if (!g_isShell) patch_horn_stop();
         if (!g_isShell) patch_music_button();
         if (!g_isShell) patch_music_playlist();
+        if (g_isShell) coin_attach();
         HANDLE h = CreateThread(NULL, 0, WatchdogThread, NULL, 0, NULL);
         if (h) CloseHandle(h);
         if (g_logging) { h = CreateThread(NULL, 0, ModuleScanThread, NULL, 0, NULL); if (h) CloseHandle(h); }

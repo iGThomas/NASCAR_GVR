@@ -186,6 +186,24 @@ namespace GvrSqlite
             return null;
         }
 
+        // [Coin] Enabled in nascar_settings.ini, read the same way as the GvrIO shim.
+        internal static bool CoinModeOn()
+        {
+            try
+            {
+                string ini = FindSettingsIni();
+                if (ini == null) return false;
+                System.Text.StringBuilder sb = new System.Text.StringBuilder(32);
+                GetPrivateProfileStringA("Coin", "Enabled", "", sb, sb.Capacity, ini);
+                string v = sb.ToString();
+                int c = v.IndexOfAny(new char[] { ';', '#' });
+                if (c >= 0) v = v.Substring(0, c);
+                v = v.Trim().ToLower(CultureInfo.InvariantCulture);
+                return v == "true" || v == "yes" || v == "on" || v == "1";
+            }
+            catch { return false; }
+        }
+
         private static bool IniBool(string ini, string section, string key, bool def)
         {
             try
@@ -409,6 +427,7 @@ namespace GvrSqlite
             _state = ConnectionState.Open;
             LoadColMeta();
             Log.W("Open OK, colmeta=" + (ColMeta == null ? -1 : ColMeta.Count));
+            CoinPricing.Repair(this, path);
         }
 
         public void Close()
@@ -438,6 +457,71 @@ namespace GvrSqlite
         {
             if (ColMeta == null || table == null || col == null) return null;
             return (string)ColMeta[(table + "." + col).ToLower(CultureInfo.InvariantCulture)];
+        }
+    }
+
+    // Team Racing's database lacks price plan 15000, the plan its menus look up, so a race cost
+    // 0 credits. Coin mode adds it once, with NASCAR Racing's rate: four coins = $1.00 = one race.
+    internal sealed class CoinPricing
+    {
+        private static bool _checked = false;
+
+        private static readonly string[] Steps = {
+            "INSERT INTO PricingModel (PricingModelId,CreationDate,ModifiedDate,PropagationDate,Label,GameId,RegionId,"
+                + "DescriptionText,DefaultForRegion,OnlineEnabled,TournamentEnabled,PlusPointsEnabled,DefaultCreditsPerUnit) "
+                + "SELECT 15000,CreationDate,ModifiedDate,PropagationDate,Label,GameId,RegionId,"
+                + "DescriptionText,'1',OnlineEnabled,TournamentEnabled,PlusPointsEnabled,4.0 "
+                + "FROM PricingModel WHERE PricingModelId=15004",
+            "UPDATE PricingModel SET DefaultForRegion='0' WHERE PricingModelId=15004",
+            "INSERT INTO ProductPricing (ProductPricingId,CreationDate,ModifiedDate,PropagationDate,CabinetId,ProductDefinitionId,"
+                + "Credits,Price,Expenses,Currency,RegionId,PricingType,Note,PricingStatus,PricingModelId,CollectionCategory,"
+                + "CoinOut1Clicks,CoinOut2Clicks) "
+                + "SELECT ProductPricingId+1000,CreationDate,ModifiedDate,PropagationDate,CabinetId,ProductDefinitionId,"
+                + "Credits,Price,Expenses,Currency,RegionId,PricingType,Note,PricingStatus,15000,"
+                + "CASE ProductDefinitionId WHEN 15005 THEN 15003 ELSE 15000 END,CoinOut1Clicks,CoinOut2Clicks "
+                + "FROM ProductPricing WHERE PricingModelId=15004",
+            "UPDATE CabinetBilling SET PricingModelId=15000",
+            "UPDATE GvrAccountingConfig SET CreditsPerUnit=4.0 WHERE CreditsPerUnit=1.0"
+        };
+
+        internal static void Repair(GvrConnection c, string path)
+        {
+            if (_checked) return;
+            _checked = true;
+            try
+            {
+                if (!Log.CoinModeOn() || !Needed(c)) return;
+                string backup = path + ".before-coin";
+                if (!System.IO.File.Exists(backup)) System.IO.File.Copy(path, backup);
+                if (!Run(c, "BEGIN IMMEDIATE")) return;
+                bool ok = true;
+                for (int i = 0; i < Steps.Length && ok; i++) ok = Run(c, Steps[i]);
+                Run(c, ok ? "COMMIT" : "ROLLBACK");
+                Log.W(ok ? "coin pricing: price plan 15000 added" : "coin pricing: repair failed, database unchanged");
+            }
+            catch (Exception ex) { Log.W("coin pricing: " + ex.Message); }
+        }
+
+        private static bool Needed(GvrConnection c)
+        {
+            IntPtr st, tail;
+            string sql = "SELECT (SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='CabinetConfiguration_NAS3')=1 "
+                + "AND (SELECT COUNT(*) FROM PricingModel WHERE PricingModelId=15000)=0 "
+                + "AND (SELECT COUNT(*) FROM PricingModel WHERE PricingModelId=15004)=1";
+            if (Native.sqlite3_prepare_v2(c.Db, Native.Utf8z(sql), -1, out st, out tail) != Native.OK) return false;
+            bool need = Native.sqlite3_step(st) == Native.ROW && Native.sqlite3_column_int64(st, 0) == 1;
+            Native.sqlite3_finalize(st);
+            return need;
+        }
+
+        private static bool Run(GvrConnection c, string sql)
+        {
+            IntPtr st, tail;
+            int rc = Native.sqlite3_prepare_v2(c.Db, Native.Utf8z(sql), -1, out st, out tail);
+            if (rc == Native.OK) { rc = Native.sqlite3_step(st); Native.sqlite3_finalize(st); }
+            if (rc == Native.OK || rc == Native.DONE) return true;
+            Log.W("coin pricing: " + Native.FromUtf8(Native.sqlite3_errmsg(c.Db)) + " in: " + sql);
+            return false;
         }
     }
 
@@ -931,7 +1015,45 @@ namespace GvrSqlite
             s = ReplaceCI(s, "GETDATE()", "datetime('now')");
             // SELECT TOP n -> ... LIMIT n
             s = TopToLimit(s);
+            s = FixDateCompare(s);
             return s;
+        }
+
+        // SQL Server compares dates by value, SQLite compares text. The database holds both
+        // "2026-11-23 18:08:41" and "11/23/2026 6:08:41 PM", so the operator's Collections page
+        // found no payments. Both sides of a date comparison are turned into the first form.
+        private static readonly System.Text.RegularExpressions.Regex DateCompare =
+            new System.Text.RegularExpressions.Regex(
+                @"((?:\[?\w+\]?\.)?\[?\w*Date\]?)\s*(<=|>=|<|>)\s*'(\d{1,2})/(\d{1,2})/(\d{4}) (\d{1,2}):(\d{2}):(\d{2}) ([AP])M'");
+
+        internal static string FixDateCompare(string s)
+        {
+            if (s == null || s.IndexOf("Date") < 0 || s.IndexOf('/') < 0) return s;
+            return DateCompare.Replace(s, new System.Text.RegularExpressions.MatchEvaluator(DateCompareFix));
+        }
+
+        private static string DateCompareFix(System.Text.RegularExpressions.Match m)
+        {
+            int hour = int.Parse(m.Groups[6].Value, CultureInfo.InvariantCulture) % 12;
+            if (m.Groups[9].Value == "P") hour += 12;
+            string iso = m.Groups[5].Value + "-" + m.Groups[3].Value.PadLeft(2, '0') + "-" + m.Groups[4].Value.PadLeft(2, '0')
+                + " " + hour.ToString(CultureInfo.InvariantCulture).PadLeft(2, '0') + ":" + m.Groups[7].Value + ":" + m.Groups[8].Value;
+            return "(" + IsoDate(m.Groups[1].Value) + " " + m.Groups[2].Value + " '" + iso + "')";
+        }
+
+        // A SQL expression giving column c as yyyy-MM-dd HH:mm:ss, for values stored in either form.
+        private static string IsoDate(string c)
+        {
+            string afterMonth = "substr(" + c + ",instr(" + c + ",'/')+1)";
+            string afterDay = "substr(" + afterMonth + ",instr(" + afterMonth + ",'/')+1)";   // yyyy h:mm:ss PM
+            string time = "substr(" + afterDay + ",6)";                                       // h:mm:ss PM
+            string month = "substr('0'||substr(" + c + ",1,instr(" + c + ",'/')-1),-2)";
+            string day = "substr('0'||substr(" + afterMonth + ",1,instr(" + afterMonth + ",'/')-1),-2)";
+            string hour = "substr('0'||(CAST(substr(" + time + ",1,instr(" + time + ",':')-1) AS INTEGER)%12"
+                + "+CASE WHEN " + c + " LIKE '%PM' THEN 12 ELSE 0 END),-2)";
+            string minSec = "substr(" + time + ",instr(" + time + ",':'),6)";
+            return "CASE WHEN " + c + " LIKE '%/%/% %:%:% _M' THEN substr(" + afterDay + ",1,4)||'-'||" + month + "||'-'||" + day
+                + "||' '||" + hour + "||" + minSec + " ELSE " + c + " END";
         }
 
         // T-SQL "SELECT TOP n ..." has no SQLite equivalent - SQLite spells it as a trailing
